@@ -1,0 +1,931 @@
+<title>Device Dashboard ลูกค้า</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Chakra+Petch:wght@500;600;700&family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans+Thai:wght@400;500;600&display=swap">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/dist/umd/supabase.min.js"></script>
+<script>
+/* Look: deliberate dark "control room" by default; the page's own ◐ button switches to light and is remembered. An explicit light choice in the host also starts it light. */
+(function(){
+  var l = null;
+  try{ l = localStorage.getItem('look'); }catch(e){}
+  if(l !== 'light' && l !== 'dark') l = document.documentElement.getAttribute('data-theme') === 'light' ? 'light' : 'dark';
+  document.documentElement.setAttribute('data-look', l);
+})();
+</script>
+<style>
+/* Layout: top bar (title + live chip + actions) → toolbar (User, search, sort, view tabs, copy) → scope line → four glowing KPIs (last one a ring) → compare bars | problem breakdown → one card per User. Table is a separate tab. Cyan = before the crash, amber = after, coral = offline/drop. */
+:root{
+  --bg:#050a12; --panel:#0c1626; --panel-2:#112038; --line:#1c3250; --line-2:#2a4a70;
+  --fg:#eaf3fc; --muted:#93abc2; --faint:#617b97;
+  --cy:#22d3ee; --cy-bar:#22d3ee; --cy-ink:#031a20; --cy-soft:#0b3442; --cy-glow:rgba(34,211,238,.42);
+  --am:#ffb84d; --am-bar:#ffb84d; --am-soft:#3a2a0e; --am-glow:rgba(255,184,77,.38);
+  --bad:#ff7070; --bad-soft:#3d1a1d; --good:#4ade80; --good-soft:#12381f; --steel:#7ba3cc;
+  --grid:rgba(120,190,255,.05); --glow-1:rgba(34,211,238,.13); --glow-2:rgba(99,102,241,.13); --shadow:rgba(0,0,0,.65);
+  --sans:"IBM Plex Sans Thai","Noto Sans Thai","Sarabun",system-ui,sans-serif;
+  --mono:"IBM Plex Mono",ui-monospace,Menlo,monospace;
+  --display:"Chakra Petch","IBM Plex Sans Thai","Noto Sans Thai",system-ui,sans-serif;
+  color-scheme:dark;
+}
+:root[data-look="light"]{
+  --bg:#e8eef5; --panel:#ffffff; --panel-2:#f1f5fa; --line:#d2deea; --line-2:#b7c9dc;
+  --fg:#0a1a2a; --muted:#4a6279; --faint:#7890a6;
+  --cy:#07688a; --cy-bar:#0891b2; --cy-ink:#ffffff; --cy-soft:#d3edf7; --cy-glow:rgba(7,104,138,.22);
+  --am:#8a4a00; --am-bar:#d97706; --am-soft:#fdebd0; --am-glow:rgba(138,74,0,.2);
+  --bad:#b3261e; --bad-soft:#fde3e0; --good:#14763a; --good-soft:#dcf3e4; --steel:#4f7aa6;
+  --grid:rgba(10,70,120,.05); --glow-1:rgba(7,104,138,.12); --glow-2:rgba(99,102,241,.08); --shadow:rgba(20,50,80,.2);
+  color-scheme:light;
+}
+
+body{
+  background:
+    radial-gradient(900px 440px at 8% -10%, var(--glow-1), transparent 62%),
+    radial-gradient(720px 380px at 98% 0%, var(--glow-2), transparent 58%),
+    linear-gradient(var(--grid) 1px, transparent 1px) 0 0/44px 44px,
+    linear-gradient(90deg, var(--grid) 1px, transparent 1px) 0 0/44px 44px,
+    var(--bg);
+  color:var(--fg);font-family:var(--sans);font-size:15px;line-height:1.55;
+  padding-inline:16px;padding-block:26px 56px}
+.wrap{max-width:1200px;margin-inline:auto;display:flex;flex-direction:column;gap:20px}
+h1{font-family:var(--display);font-size:1.9rem;line-height:1.15;margin:0;font-weight:600;letter-spacing:.01em;text-wrap:balance}
+h2{font-family:var(--display);font-size:1.05rem;margin:0;font-weight:600;letter-spacing:.02em}
+.num{font-family:var(--mono);font-variant-numeric:tabular-nums}
+button,select,input{font:inherit;color:inherit}
+:focus-visible{outline:2px solid var(--cy);outline-offset:2px}
+[hidden]{display:none!important}
+
+/* top bar */
+.top{display:flex;flex-wrap:wrap;gap:12px 20px;align-items:flex-end;justify-content:space-between}
+.sub{color:var(--muted);font-size:.9rem;margin-top:8px;min-height:1.4em;display:flex;align-items:center;gap:8px}
+.dot{width:8px;height:8px;border-radius:50%;background:var(--cy-bar);box-shadow:0 0 10px var(--cy-glow);animation:pulse 2.4s ease-in-out infinite}
+@keyframes pulse{50%{opacity:.3}}
+.actions{display:flex;gap:10px;flex-wrap:wrap}
+.btn{border:1px solid var(--line-2);background:var(--panel);padding:8px 18px;border-radius:10px;cursor:pointer;font-weight:500;transition:border-color .15s,box-shadow .15s}
+.btn:hover{border-color:var(--cy);box-shadow:0 0 0 3px var(--cy-soft)}
+.btn.primary{background:var(--cy);border-color:var(--cy);color:var(--cy-ink);font-weight:600;box-shadow:0 8px 26px -10px var(--cy-glow)}
+.btn.primary:hover{filter:brightness(1.1)}
+.btn.danger{border-color:var(--bad);color:var(--bad)}
+.btn.danger.confirm{background:var(--bad);color:var(--panel)}
+.btn.sm{padding:4px 14px;font-size:.88rem}
+.btn.icon{padding:8px 12px;font-size:1.05rem;line-height:1}
+.btn[disabled]{opacity:.5;cursor:default}
+
+/* surfaces with corner brackets */
+.panel,.kpi,.ucard,.card,.state{position:relative;background:linear-gradient(180deg,var(--panel-2),var(--panel));border:1px solid var(--line);border-radius:12px;box-shadow:0 16px 44px -24px var(--shadow)}
+.panel::before,.kpi::before,.state::before{content:"";position:absolute;left:-1px;top:-1px;width:16px;height:16px;border-left:2px solid var(--cy-bar);border-top:2px solid var(--cy-bar);border-top-left-radius:12px;pointer-events:none}
+.panel::after,.kpi::after,.state::after{content:"";position:absolute;right:-1px;bottom:-1px;width:16px;height:16px;border-right:2px solid var(--cy-bar);border-bottom:2px solid var(--cy-bar);border-bottom-right-radius:12px;pointer-events:none}
+.panel{overflow:hidden}
+.panel-h{display:flex;flex-wrap:wrap;gap:8px 16px;align-items:center;justify-content:space-between;padding:14px 18px;border-bottom:1px solid var(--line)}
+.legend{display:flex;gap:16px;font-size:.84rem;color:var(--muted);align-items:center}
+.legend span::before{content:"";display:inline-block;width:10px;height:10px;border-radius:3px;margin-right:6px;vertical-align:-1px}
+.legend .b::before{background:var(--cy-bar)} .legend .a::before{background:var(--am-bar)}
+
+/* toolbar */
+.toolbar{display:flex;flex-wrap:wrap;gap:12px;align-items:flex-end}
+label.f{display:flex;flex-direction:column;gap:5px;font-size:.8rem;color:var(--muted);min-width:0}
+.toolbar label.f{flex:1 1 190px}
+label.f select,label.f input[type=search],.toolbar input[type=search]{background:var(--panel);border:1px solid var(--line-2);border-radius:10px;padding:9px 12px;color:var(--fg);width:100%;min-width:0}
+.map-grid label.f select{background:var(--bg)}
+label.f select:focus,label.f input:focus,td input:focus,#addForm input:focus{border-color:var(--cy);outline:none;box-shadow:0 0 0 3px var(--cy-soft)}
+.seg{display:inline-flex;border:1px solid var(--line-2);border-radius:10px;overflow:hidden;background:var(--panel)}
+.seg button{all:unset;cursor:pointer;padding:9px 18px;font-weight:500;color:var(--muted);box-sizing:border-box}
+.seg button+button{border-left:1px solid var(--line-2)}
+.seg button[aria-selected="true"],.seg button[aria-pressed="true"]{background:var(--cy-soft);color:var(--cy);font-weight:600}
+.seg button:focus-visible{outline:2px solid var(--cy);outline-offset:-2px}
+
+/* scope line */
+.scope{display:flex;flex-wrap:wrap;align-items:center;gap:12px}
+.scope h2{font-size:1.4rem}
+.chip{font-size:.82rem;color:var(--muted);border:1px solid var(--line-2);border-radius:99px;padding:2px 12px;overflow-wrap:anywhere}
+
+/* KPIs */
+.kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(230px,1fr));gap:14px}
+.kpi{padding:16px 20px 18px;min-width:0}
+.kpi .l{font-size:.88rem;color:var(--muted);display:flex;gap:8px;align-items:center}
+.kpi .l::before{content:"";width:9px;height:9px;border-radius:3px;background:var(--muted)}
+.kpi .v{font-family:var(--display);font-size:3rem;font-weight:600;line-height:1.1;font-variant-numeric:tabular-nums;overflow-wrap:anywhere}
+.kpi .s{margin-top:6px;font-size:.86rem;color:var(--muted);display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+.kpi.k-before .l::before{background:var(--cy-bar)} .kpi.k-before .v{color:var(--cy);text-shadow:0 0 26px var(--cy-glow)}
+.kpi.k-after .l::before{background:var(--am-bar)}  .kpi.k-after .v{color:var(--am);text-shadow:0 0 26px var(--am-glow)}
+.kpi.k-bad .l::before{background:var(--bad)}       .kpi.k-bad .v{color:var(--bad)}
+.kpi.k-ring{display:flex;align-items:center;gap:16px}
+.kpi.k-ring .t{min-width:0}
+.ring{width:108px;height:108px;flex:none}
+.ring-t{font-family:var(--display);font-weight:600;font-size:26px;fill:var(--fg)}
+.dl{font-size:.82rem;font-weight:600;border-radius:99px;padding:2px 10px;font-family:var(--mono);white-space:nowrap}
+.dl.dn{background:var(--bad-soft);color:var(--bad)}
+.dl.up{background:var(--good-soft);color:var(--good)}
+.dl.eq{background:var(--panel-2);color:var(--muted);border:1px solid var(--line)}
+
+/* compare + breakdown */
+.grid2{display:grid;grid-template-columns:minmax(0,1.5fr) minmax(0,1fr);gap:14px}
+.grid2.single{grid-template-columns:minmax(0,1fr)}
+@media (max-width:860px){.grid2{grid-template-columns:minmax(0,1fr)}}
+.cmp{display:flex;flex-direction:column;max-height:580px;overflow-y:auto;padding:8px 10px}
+.crow{display:grid;grid-template-columns:minmax(110px,190px) minmax(0,1fr);gap:14px;align-items:center;padding:9px 8px;border-radius:10px;cursor:pointer;text-align:left;font:inherit;color:inherit;background:none;border:0;width:100%}
+.crow:hover{background:var(--panel-2)}
+.crow:focus-visible{outline:2px solid var(--cy);outline-offset:-2px}
+.cname{display:flex;gap:10px;align-items:baseline;min-width:0}
+.rk{color:var(--faint);font-size:.8rem;flex:none}
+.nm{font-weight:500;overflow-wrap:anywhere}
+.cbars{display:flex;flex-direction:column;gap:6px;min-width:0}
+.bl{display:flex;align-items:center;gap:10px}
+.btrack{flex:1;height:9px;background:var(--line);border-radius:5px;overflow:hidden;min-width:0}
+.bf{height:100%;border-radius:5px;min-width:2px}
+.bf.b{background:var(--cy-bar)} .bf.a{background:var(--am-bar)}
+.bv{width:52px;text-align:right;font-size:.88rem;flex:none}
+.tg{display:flex;flex-direction:column;gap:8px;padding-bottom:14px;border-bottom:1px solid var(--line)}
+.tg:last-child{border-bottom:0;padding-bottom:0}
+.tg .pc{color:var(--muted);font-size:.82rem}
+.tg .brow{display:flex;align-items:center;gap:10px}
+.tg .bl{width:52px;flex:none;font-size:.78rem;color:var(--muted)}
+.tg .bv{width:60px}
+.tg .off{font-size:.86rem;color:var(--bad)}
+.tg .off b{font-family:var(--display);font-size:1.05rem;margin-left:4px}
+.brk{display:flex;flex-direction:column;gap:16px;padding:18px}
+.br .top2{display:flex;justify-content:space-between;gap:12px;align-items:baseline}
+.br .lab{font-size:.92rem;overflow-wrap:anywhere}
+.br .val{font-family:var(--display);font-size:1.4rem;font-weight:600;white-space:nowrap}
+.br .pc{color:var(--muted);font-size:.8rem;margin-left:8px;font-family:var(--mono);font-weight:400}
+.br .tr{height:8px;background:var(--line);border-radius:4px;overflow:hidden;margin-top:7px}
+.br .tr i{display:block;height:100%;border-radius:4px;background:var(--steel)}
+.br.bad .tr i{background:var(--bad)} .br.bad .val{color:var(--bad)}
+.hint{font-size:.84rem;color:var(--muted);margin:0}
+
+/* cards */
+.sec-h{display:flex;align-items:center;gap:12px;margin-bottom:12px}
+.cards{display:grid;grid-template-columns:repeat(auto-fill,minmax(310px,1fr));gap:14px}
+.ucard{display:flex;flex-direction:column;align-items:stretch;gap:14px;padding:16px 18px;text-align:left;cursor:pointer;font:inherit;color:inherit;width:100%;transition:border-color .15s,transform .15s}
+.ucard:hover{border-color:var(--cy);transform:translateY(-2px)}
+.ucard>span{display:block;min-width:0}
+.u-top{display:flex!important;align-items:center;gap:10px}
+.u-name{font-family:var(--display);font-weight:600;font-size:1.12rem;overflow-wrap:anywhere}
+.u-note{margin-left:auto;font-size:.76rem;color:var(--muted);border:1px solid var(--line-2);border-radius:99px;padding:1px 10px;max-width:46%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.u-nums{display:flex!important;align-items:flex-end;gap:12px;flex-wrap:wrap}
+.un{display:flex;flex-direction:column}
+.un em{font-style:normal;font-size:.78rem;color:var(--muted)}
+.un b{font-family:var(--display);font-size:2.1rem;line-height:1.1;font-weight:600;font-variant-numeric:tabular-nums}
+.un.b b{color:var(--cy)} .un.a b{color:var(--am)}
+.arrow{color:var(--faint);padding-bottom:7px}
+.u-nums .dl{margin-left:auto;align-self:center}
+.u-bars{display:flex!important;flex-direction:column;gap:5px}
+.ub{height:6px;border-radius:3px;background:var(--line);overflow:hidden}
+.ub i{display:block;height:100%;border-radius:3px}
+.ub.b i{background:var(--cy-bar)} .ub.a i{background:var(--am-bar)}
+.u-tags{display:flex!important;flex-wrap:wrap;gap:6px}
+.tag{font-size:.78rem;border:1px solid var(--line-2);border-radius:6px;padding:2px 8px;color:var(--muted);display:inline-flex;gap:6px}
+.tag i{font-style:normal} .tag b{color:var(--fg);font-weight:600}
+.tag.bad{border-color:var(--bad)} .tag.bad b{color:var(--bad)}
+
+/* states, import, drag */
+.state{padding:56px 20px;text-align:center;display:flex;flex-direction:column;gap:14px;align-items:center;color:var(--muted)}
+.state h2{color:var(--fg);font-size:1.3rem}
+.state .btns{display:flex;gap:10px;flex-wrap:wrap;justify-content:center}
+#dz{position:fixed;inset:0;z-index:50;background:rgba(5,10,18,.82);display:flex;align-items:center;justify-content:center;padding:24px}
+#dz div{border:2px dashed var(--cy);border-radius:16px;padding:48px 36px;font-family:var(--display);font-size:1.4rem;color:#eaf3fc;background:rgba(11,52,66,.55);text-align:center}
+#imp{padding:18px;display:flex;flex-direction:column;gap:12px}
+#imp h2{display:flex;justify-content:space-between;gap:10px;flex-wrap:wrap;align-items:baseline}
+details.cols>summary{cursor:pointer;font-weight:500;color:var(--cy)}
+.map-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:10px;margin-top:10px}
+.check{display:flex;gap:8px;align-items:center;font-size:.92rem;cursor:pointer}
+.imp-actions{display:flex;gap:10px;flex-wrap:wrap}
+.prev{overflow-x:auto}
+.prev table{min-width:0;width:auto}
+.prev th,.prev td{padding:6px 14px;background:transparent}
+
+/* full table tab + edit mode */
+.scroll{overflow-x:auto}
+table{border-collapse:collapse;width:100%}
+table.wide{min-width:1260px}
+th,td{text-align:left;padding:11px 14px;border-bottom:1px solid var(--line);vertical-align:middle}
+th{font-size:.8rem;font-weight:500;color:var(--muted);background:var(--panel);min-width:100px;line-height:1.4}
+th.r,td.r{text-align:right}
+tbody tr,tfoot tr{background:var(--panel)}
+tbody tr:hover{background:var(--panel-2)}
+tbody tr.sel{background:var(--cy-soft)}
+tfoot tr{background:var(--panel-2)}
+tfoot td{font-weight:600;border-bottom:0;font-size:1.02rem}
+thead tr.grp th{text-align:center;font-family:var(--display);font-weight:600;letter-spacing:.03em;font-size:.88rem}
+thead tr.grp th.pre{background:var(--cy-soft);color:var(--cy)}
+thead tr.grp th.after,th.after{background:var(--am-soft);color:var(--am)}
+th button{all:unset;cursor:pointer;display:inline-flex;gap:4px;align-items:center;text-align:inherit}
+th button:hover{color:var(--fg)}
+th button:focus-visible{outline:2px solid var(--cy);outline-offset:2px}
+th[aria-sort] button{color:var(--fg);font-weight:600}
+th.after[aria-sort] button{color:var(--am)}
+.s1,.s2{position:sticky;z-index:1;background:inherit}
+th.s1,th.s2,thead tr.grp th.s1,thead tr.grp th.s2{background:var(--panel);color:var(--muted)}
+.s1{left:0;width:64px;min-width:64px;max-width:64px}
+.s2{left:64px;min-width:180px;box-shadow:1px 0 0 var(--line)}
+.rank{color:var(--muted)}
+.uname{all:unset;cursor:pointer;font-weight:600;color:var(--cy);overflow-wrap:anywhere}
+.uname:hover{text-decoration:underline}
+.uname:focus-visible{outline:2px solid var(--cy);outline-offset:2px}
+.u-type{display:inline-flex;gap:4px;margin-left:auto}
+.u-type+.u-note{margin-left:8px;max-width:30%}
+.tp{font-size:.72rem;font-weight:600;letter-spacing:.02em;border-radius:99px;padding:1px 9px;border:1px solid var(--line-2);color:var(--muted);white-space:nowrap}
+.tp.oms{color:var(--cy);border-color:var(--cy);background:var(--cy-soft)}
+.tp.ss{color:var(--am);border-color:var(--am);background:var(--am-soft)}
+.u-top .u-note{margin-left:0}
+.typehint{font-size:.82rem;color:var(--muted)}
+td select{background:var(--panel-2);color:var(--fg);border:1px solid var(--line-2);border-radius:8px;padding:6px 8px;font:inherit}
+.note-c{min-width:160px;color:var(--muted);overflow-wrap:anywhere}
+td.num{font-size:1.02rem}
+td.after-c{color:var(--am);font-weight:600;background:var(--am-soft)}
+tfoot td.after-c{background:var(--am-soft)}
+.zero{color:var(--muted);font-weight:400}
+.off{color:var(--bad);font-weight:600}
+.mb{height:4px;border-radius:2px;background:var(--line);margin-top:6px;margin-left:auto;overflow:hidden;min-width:64px}
+.mb i{display:block;height:100%;border-radius:2px;background:var(--cy-bar)}
+.mb.a i{background:var(--am-bar)}
+.empty{padding:34px 14px;text-align:center;color:var(--muted)}
+td input{background:var(--bg);border:1px solid var(--line-2);border-radius:8px;padding:7px 9px;width:100%;min-width:0}
+td input.n{text-align:right;width:96px;font-family:var(--mono)}
+#addForm{display:flex;flex-wrap:wrap;gap:10px;align-items:flex-end;padding:16px;border-top:1px solid var(--line);background:var(--panel-2)}
+#addForm label{display:flex;flex-direction:column;gap:5px;font-size:.8rem;color:var(--muted)}
+#addForm input{background:var(--panel);border:1px solid var(--line-2);border-radius:8px;padding:8px 10px;min-width:0}
+#addForm .grow{flex:1 1 170px}
+#addForm .n{width:100px;text-align:right;font-family:var(--mono)}
+#toast{position:fixed;left:50%;bottom:calc(20px + env(safe-area-inset-bottom,0px));transform:translateX(-50%);background:var(--fg);color:var(--bg);padding:9px 18px;border-radius:10px;font-size:.9rem;opacity:0;pointer-events:none;transition:opacity .2s;max-width:90vw;z-index:60}
+#toast.show{opacity:1}
+@media (prefers-reduced-motion:reduce){*{transition:none!important;animation:none!important}.ucard:hover{transform:none}}
+#login{position:fixed;inset:0;z-index:50;display:flex;align-items:center;justify-content:center;padding:16px;background:var(--bg)}
+#login[hidden]{display:none}
+#login form{width:min(380px,100%);background:var(--panel);border:1px solid var(--line-2);border-radius:16px;padding:28px 24px;display:flex;flex-direction:column;gap:14px;box-shadow:0 30px 80px -30px var(--shadow)}
+#login h2{margin:0;font-family:var(--display);font-size:1.35rem}
+#login p{margin:0;color:var(--muted);font-size:.92rem}
+#login label{display:flex;flex-direction:column;gap:6px;font-size:.88rem;color:var(--muted)}
+#login input{background:var(--panel-2);border:1px solid var(--line-2);color:var(--fg);border-radius:10px;padding:10px 12px;font:inherit}
+#login input:focus{outline:2px solid var(--cy);border-color:var(--cy)}
+#login .err{color:var(--bad);min-height:1.2em;font-size:.88rem}
+</style>
+
+<div id="login" hidden><form id="loginForm" autocomplete="on">
+  <h2>เข้าสู่ระบบ</h2><p>ใช้อีเมลและรหัสผ่านที่ผู้ดูแลสร้างให้</p>
+  <label>อีเมล<input id="l-email" type="email" autocomplete="username" required></label>
+  <label>รหัสผ่าน<input id="l-pass" type="password" autocomplete="current-password" required></label>
+  <div class="err" id="l-err" role="alert"></div>
+  <button class="btn primary" id="l-go" type="submit">เข้าสู่ระบบ</button>
+  <button class="btn" id="l-close" type="button" hidden>ปิด</button>
+</form></div>
+<div id="dz" hidden><div>วางไฟล์ Excel หรือ CSV เพื่อ Import</div></div>
+
+<div class="wrap">
+  <header class="top">
+    <div style="min-width:0">
+      <h1>จำนวน Device ก่อนและหลังเซิร์ฟล่ม</h1>
+      <div class="sub" id="sub"></div>
+    </div>
+    <div class="actions">
+      <button class="btn primary" id="pick" type="button" hidden>Import Excel</button>
+      <button class="btn" id="edit" type="button" hidden>แก้ไขข้อมูล</button>
+      <button class="btn" id="auth" type="button" hidden>เข้าสู่ระบบ</button>
+      <button class="btn icon" id="theme" type="button" aria-label="สลับโหมดสว่างและมืด" title="สลับโหมดสว่าง/มืด">◐</button>
+      <input id="file" type="file" accept=".xlsx,.xls,.csv,.tsv" hidden>
+    </div>
+  </header>
+
+  <section class="card" id="imp" hidden>
+    <h2><span id="impTitle">ตรวจไฟล์ก่อนนำเข้า</span><span class="hint" id="impCount"></span></h2>
+    <div class="prev" id="i-prev"></div>
+    <p class="hint" id="i-warn"></p>
+    <details class="cols">
+      <summary>ตรวจว่าระบบจับคอลัมน์ถูกไหม (กดเพื่อแก้)</summary>
+      <div class="map-grid" id="i-map"></div>
+    </details>
+    <label class="check" for="i-replace"><input type="checkbox" id="i-replace"> ลบ User เดิมที่ไม่อยู่ในไฟล์นี้ด้วย</label>
+    <p class="hint">User ชื่อเดิมจะถูกอัปเดตตัวเลข ชื่อใหม่จะถูกเพิ่ม ถ้าไฟล์มีชื่อซ้ำ ระบบรวมตัวเลขให้</p>
+    <div class="imp-actions">
+      <button class="btn primary" id="i-go" type="button">นำเข้า</button>
+      <button class="btn" id="i-cancel" type="button">ยกเลิก</button>
+    </div>
+  </section>
+
+  <div class="state" id="state" hidden></div>
+
+  <div id="main" style="display:flex;flex-direction:column;gap:20px">
+    <div class="toolbar" id="toolbar">
+      <label class="f" for="userSel">เลือกดูทีละ User<select id="userSel"></select></label>
+      <label class="f" for="q">ค้นหาชื่อ User<input id="q" type="search" placeholder="พิมพ์ชื่อ User"></label>
+      <label class="f" for="sortSel">เรียงตาม<select id="sortSel"></select></label>
+      <div class="seg" role="group" aria-label="ประเภทการส่งสื่อ" id="typeSeg">
+        <button type="button" data-type="" aria-pressed="true" title="ทุกประเภท">ทั้งหมด</button>
+        <button type="button" data-type="OMS" aria-pressed="false" title="OMS = เราเป็นฝ่ายส่งสื่อเอง">OMS</button>
+        <button type="button" data-type="Self-Serve" aria-pressed="false" title="Self-Serve = ลูกค้าส่งสื่อเอง">Self-Serve</button>
+      </div>
+      <div class="seg" role="tablist" aria-label="มุมมอง">
+        <button type="button" role="tab" data-view="dash" aria-selected="true">แดชบอร์ด</button>
+        <button type="button" role="tab" data-view="table" aria-selected="false">ตาราง</button>
+      </div>
+      <button class="btn" id="copy" type="button">คัดลอกตาราง</button>
+    </div>
+
+    <div class="scope" id="scope"></div>
+    <section class="kpis" id="kpis" aria-live="polite"></section>
+
+    <div class="grid2" id="charts">
+      <section class="panel" id="p-compare">
+        <div class="panel-h"><h2>เทียบก่อน–หลังเซิร์ฟล่ม รายลูกค้า</h2><div class="legend"><span class="b">ก่อนเซิร์ฟล่ม</span><span class="a">หลังเซิร์ฟล่ม</span></div></div>
+        <div class="cmp" id="cmp"></div>
+      </section>
+      <section class="panel" id="p-break">
+        <div class="panel-h"><h2 id="brkTitle">แยกตามประเภท</h2></div>
+        <div class="brk" id="brk"></div>
+      </section>
+    </div>
+
+    <section id="cards-wrap">
+      <div class="sec-h"><h2>รายละเอียดแต่ละ User</h2><span class="chip" id="cardsCount"></span></div>
+      <div class="cards" id="cards"></div>
+    </section>
+
+    <section class="panel" id="p-table">
+      <div class="panel-h"><h2 id="ptitle">ตารางข้อมูลเต็ม</h2></div>
+      <div class="scroll"><table id="tbl" class="wide"></table></div>
+      <form id="addForm" hidden autocomplete="off"></form>
+    </section>
+  </div>
+</div>
+<div id="toast" role="status"></div>
+
+<script>
+const $ = s => document.querySelector(s);
+const esc = s => String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const fmt = n => Number(n).toLocaleString('en-US');
+const toInt = v => Math.max(0, Math.floor(Number(String(v).replace(/,/g,'').trim())) || 0);
+const dash = n => n ? fmt(n) : '-';
+const pad2 = n => String(n).padStart(2, '0');
+const fmtPct = x => x === null ? '-' : (x * 100).toFixed(1) + '%';
+
+/* columns in the same order as the report sheet */
+const COLS = [
+  {k:'type',    t:'type', label:'ประเภท'},
+  {k:'before',  t:'num',  label:'จำนวน Device'},
+  {k:'offline', t:'num',  label:'จำนวน Device offline ทั้งหมด'},
+  {k:'after',   t:'num',  label:'จำนวนหลังเซิร์ฟล่ม'},
+  {k:'note',    t:'text', label:'หมายเหตุ'}
+];
+/* ประเภท: OMS = เราเป็นฝ่ายส่งสื่อเอง, Self-Serve = ลูกค้าส่งสื่อเอง (User เดียวมีได้ทั้งสองแบบ) */
+const TBOTH = 'OMS + Self-Serve';
+const TYPE_OPTS = ['', 'OMS', 'Self-Serve', TBOTH];
+function normType(v){
+  const t = String(v ?? '').toLowerCase(), o = /oms/.test(t), c = /self|ลูกค้าส่ง/.test(t);
+  if(o && c) return TBOTH; if(o) return 'OMS'; if(c) return 'Self-Serve';
+  return String(v ?? '').replace(/\s+/g,' ').trim();
+}
+const typeMatch = (r, f) => !f || (f === 'OMS' ? (r.type === 'OMS' || r.type === TBOTH) : (r.type === 'Self-Serve' || r.type === TBOTH));
+const NUMK = COLS.filter(c => c.t === 'num').map(c => c.k);
+const LABEL = Object.fromEntries(COLS.map(c => [c.k, c.label]));
+const SORTS = [['before','จำนวน Device ก่อนเซิร์ฟล่ม'],['after','จำนวนหลังเซิร์ฟล่ม'],['offline','Offline มากที่สุด'],['diff','ลดลงมากที่สุด (หลัง − ก่อน)'],['name','ชื่อ User']];
+const defDir = k => (k === 'name' || k === 'diff') ? 1 : -1;
+
+const S = {
+  db: null, col: null, canWrite: false, editing: false,
+  docs: [], loaded: false, failed: '',
+  selected: '', q: '', type: '', view: 'dash', sort: {key:'before', dir:-1}, confirmId: '', pending: false,
+  imp: null, importing: false
+};
+
+/* ---------- helpers ---------- */
+function toast(msg){ const t = $('#toast'); t.textContent = msg; t.classList.add('show'); clearTimeout(toast.h); toast.h = setTimeout(() => t.classList.remove('show'), 2800); }
+const chains = new Map();
+function queue(id, fn){
+  const p = (chains.get(id) || Promise.resolve()).then(fn).catch(writeError);
+  chains.set(id, p); return p;
+}
+function writeError(e){
+  const code = e && e.code;
+  if(code === 'invalid_argument'){ S.canWrite = false; S.editing = false; S.imp = null; toast('บัญชีนี้แก้ข้อมูลไม่ได้ ดูได้อย่างเดียว'); render(); renderImport(); }
+  else if(code === 'quota_exceeded') toast('พื้นที่เก็บข้อมูลเต็ม ลบ User ที่ไม่ใช้ก่อน');
+  else toast('บันทึกไม่สำเร็จ ลองอีกครั้ง');
+}
+function tableFocused(){ const a = document.activeElement; return !!(a && a.closest && a.closest('#tbl') && a.tagName === 'INPUT'); }
+
+/* ---------- theme ---------- */
+$('#theme').addEventListener('click', () => {
+  const next = document.documentElement.getAttribute('data-look') === 'light' ? 'dark' : 'light';
+  document.documentElement.setAttribute('data-look', next);
+  try{ localStorage.setItem('look', next); }catch(e){}
+});
+
+/* ---------- derive ---------- */
+function allRows(){
+  return S.docs.map(d => {
+    const r = {id:d.id, name:String(d.name ?? ''), note:String(d.note ?? ''), type:normType(d.type), createdAt:Number(d.createdAt) || 0, updatedAt:Number(d.updatedAt) || 0};
+    NUMK.forEach(k => r[k] = toInt(d[k]));
+    r.diff = r.after - r.before;
+    return r;
+  });
+}
+function sortRows(list){
+  if(S.editing) return list.sort((a,b) => a.createdAt - b.createdAt || a.name.localeCompare(b.name,'th'));
+  const {key, dir} = S.sort;
+  return list.sort((a,b) => {
+    const c = key === 'name' ? a.name.localeCompare(b.name,'th') : a[key] - b[key];
+    return c ? c*dir : (b.before - a.before) || a.name.localeCompare(b.name,'th');
+  });
+}
+function visible(){
+  const q = S.q.trim().toLowerCase();
+  const ranked = sortRows(allRows().filter(r => S.editing || typeMatch(r, S.type))).map((r,i) => ({...r, rank:i+1}));
+  return {ranked, list: ranked.filter(r => (!S.selected || r.id === S.selected) && (!q || r.name.toLowerCase().includes(q)))};
+}
+const sum = (list, k) => list.reduce((a,r) => a + r[k], 0);
+
+/* ---------- small visual helpers ---------- */
+function deltaChip(d){
+  if(!d) return '<span class="dl eq" title="หลัง − ก่อนเซิร์ฟล่ม">= 0</span>';
+  return `<span class="dl ${d < 0 ? 'dn' : 'up'}" title="หลัง − ก่อนเซิร์ฟล่ม">${d < 0 ? '▼' : '▲'} ${fmt(Math.abs(d))}</span>`;
+}
+function ring(p){
+  const r = 46, c = 2 * Math.PI * r, f = p === null ? 0 : Math.min(1, p);
+  const label = p === null ? 'ไม่มีข้อมูล' : 'หลังเซิร์ฟล่มเหลือ ' + (p * 100).toFixed(1) + '% ของก่อนล่ม';
+  return `<svg class="ring" viewBox="0 0 120 120" role="img" aria-label="${label}">
+    <circle cx="60" cy="60" r="${r}" fill="none" stroke="var(--line)" stroke-width="11"/>
+    <circle cx="60" cy="60" r="${r}" fill="none" stroke="var(--am-bar)" stroke-width="11" stroke-linecap="round" stroke-dasharray="${(c*f).toFixed(1)} ${c.toFixed(1)}" transform="rotate(-90 60 60)"/>
+    <text x="60" y="68" text-anchor="middle" class="ring-t">${p === null ? '-' : Math.round(p * 100) + '%'}</text></svg>`;
+}
+
+/* ---------- render ---------- */
+function typeChips(t){
+  if(!t) return '';
+  const o = `<span class="tp oms" title="เราเป็นฝ่ายส่งสื่อเอง">OMS</span>`, c = `<span class="tp ss" title="ลูกค้าส่งสื่อเอง">Self-Serve</span>`;
+  return t === TBOTH ? o + c : t === 'OMS' ? o : t === 'Self-Serve' ? c : `<span class="tp">${esc(t)}</span>`;
+}
+function render(){
+  const {ranked, list} = visible();
+  if(S.selected && !ranked.some(r => r.id === S.selected)) S.selected = '';
+  const w = S.canWrite, ed = S.editing;
+  $('#pick').hidden = !(w && !ed);
+  $('#edit').hidden = !w;
+  $('#edit').textContent = ed ? 'เสร็จสิ้น' : 'แก้ไขข้อมูล';
+  $('#edit').classList.toggle('primary', ed);
+
+  const latest = Math.max(0, ...ranked.map(r => r.updatedAt));
+  $('#sub').innerHTML = latest ? '<span class="dot"></span><span>อัปเดตล่าสุด ' + esc(new Date(latest).toLocaleString('th-TH', {dateStyle:'medium', timeStyle:'short'})) + '</span>' : '';
+
+  /* page-level states: loading, error, empty */
+  let st = '';
+  if(S.failed) st = `<h2>เปิดข้อมูลไม่ได้</h2><p>${esc(S.failed)}</p>`;
+  else if(!S.loaded) st = '<p>กำลังโหลดข้อมูล…</p>';
+  else if(!ranked.length && !ed) st = w
+    ? '<h2>ยังไม่มีข้อมูล</h2><p>นำเข้าจากไฟล์ Excel หรือพิมพ์เองก็ได้</p><div class="btns"><button class="btn primary" type="button" data-act="pick">Import Excel</button><button class="btn" type="button" data-act="edit">แก้ไขข้อมูล</button></div>'
+    : '<h2>ยังไม่มีข้อมูล</h2>';
+  $('#state').hidden = !st; $('#state').innerHTML = st;
+  $('#main').hidden = !!st;
+  if(st) return;
+
+  const dashOn = !ed && S.view === 'dash';
+  $('#toolbar').hidden = ed; $('#scope').hidden = ed; $('#kpis').hidden = ed;
+  $('#charts').hidden = !dashOn || !!S.selected;
+  $('#p-compare').hidden = !!S.selected;
+  $('#charts').classList.toggle('single', !!S.selected);
+  $('#cards-wrap').hidden = !(dashOn && !S.selected);
+  $('#p-table').hidden = !(ed || S.view === 'table');
+  $('#addForm').hidden = !(ed && w);
+  $('#ptitle').textContent = ed ? 'แก้ไขข้อมูล' : 'ตารางข้อมูลเต็ม';
+
+  if(!ed){
+    const sel = ranked.find(r => r.id === S.selected);
+    const pool = sel ? [sel] : ranked;
+
+    $('#userSel').innerHTML = `<option value="">ทุก User (${fmt(ranked.length)})</option>` +
+      [...ranked].sort((a,b) => a.name.localeCompare(b.name,'th')).map(r => `<option value="${esc(r.id)}">${esc(r.name)}</option>`).join('');
+    $('#userSel').value = S.selected;
+    const known = SORTS.some(s => s[0] === S.sort.key);
+    $('#sortSel').innerHTML = SORTS.map(s => `<option value="${s[0]}">${esc(s[1])}</option>`).join('') + (known ? '' : '<option value="" disabled>ตามคอลัมน์ในตาราง</option>');
+    $('#sortSel').value = known ? S.sort.key : '';
+    const all = allRows();
+    document.querySelectorAll('#typeSeg [data-type]').forEach(b => {
+      const k = b.dataset.type, n = all.filter(r => typeMatch(r, k)).length, base = k || 'ทั้งหมด';
+      b.textContent = base + ' (' + n + ')'; b.setAttribute('aria-pressed', String(k === S.type));
+    });
+    document.querySelectorAll('.seg [data-view]').forEach(b => b.setAttribute('aria-selected', String(b.dataset.view === S.view)));
+
+    $('#scope').innerHTML = sel
+      ? `<button type="button" class="btn sm" data-act="back">← ทุก User</button><h2>${esc(sel.name || '(ไม่มีชื่อ)')}</h2>${typeChips(sel.type)}${sel.note ? `<span class="chip">${esc(sel.note)}</span>` : ''}`
+      : `<h2>ทุก User</h2><span class="chip">${fmt(ranked.length)} User</span>`;
+    renderKpis(pool);
+    if(dashOn){
+      renderBreak(pool);
+      if(!sel){ renderCompare(list); renderCards(list); }
+    }
+  }
+  if(ed || S.view === 'table') renderTable(ranked, list);
+}
+
+function renderKpis(pool){
+  const before = sum(pool,'before'), after = sum(pool,'after'), off = sum(pool,'offline'), d = after - before;
+  const ratio = before ? after / before : null;
+  $('#kpis').innerHTML =
+    `<div class="kpi k-before"><div class="l">ก่อนเซิร์ฟล่ม</div><div class="v">${fmt(before)}</div><div class="s">จำนวน Device ทั้งหมด</div></div>` +
+    `<div class="kpi k-after"><div class="l">หลังเซิร์ฟล่ม</div><div class="v">${fmt(after)}</div><div class="s">${deltaChip(d)}<span>เทียบก่อนเซิร์ฟล่ม</span></div></div>` +
+    `<div class="kpi k-bad"><div class="l">Offline ทั้งหมด (ก่อนล่ม)</div><div class="v">${fmt(off)}</div><div class="s">${fmtPct(before ? off / before : null)} ของ Device ก่อนล่ม</div></div>` +
+    `<div class="kpi k-ring">${ring(ratio)}<div class="t"><div class="l">หลังล่มเหลืออยู่</div><div class="s" style="margin-top:2px">${ratio === null ? 'ไม่มีข้อมูลก่อนล่ม' : 'ของจำนวน Device ก่อนเซิร์ฟล่ม'}</div></div></div>`;
+}
+
+function renderCompare(list){
+  const max = Math.max(1, ...list.map(r => Math.max(r.before, r.after)));
+  $('#cmp').innerHTML = list.length ? list.map(r => `<button type="button" class="crow" data-user="${esc(r.id)}">
+      <span class="cname"><span class="rk num">${pad2(r.rank)}</span><span class="nm">${esc(r.name || '(ไม่มีชื่อ)')}</span></span>
+      <span class="cbars">
+        <span class="bl"><span class="btrack"><span class="bf b" style="display:block;width:${r.before / max * 100}%"></span></span><span class="bv num">${fmt(r.before)}</span></span>
+        <span class="bl"><span class="btrack"><span class="bf a" style="display:block;width:${r.after / max * 100}%"></span></span><span class="bv num">${fmt(r.after)}</span></span>
+      </span></button>`).join('')
+    : '<p class="empty">ไม่พบ User ที่ตรงกับคำค้น</p>';
+}
+
+function renderBreak(pool){
+  const groups = [['OMS','OMS','เราส่งสื่อเอง'],['Self-Serve','Self-Serve','ลูกค้าส่งสื่อเอง'],[TBOTH,'OMS + Self-Serve','มีทั้งสองแบบ'],['','ไม่ระบุประเภท','']].map(([key, label, sub]) => {
+    const rows = pool.filter(r => key === '' ? (!r.type) : r.type === key);
+    return {label: key === '' ? 'ไม่ระบุประเภท' : label, sub, n: rows.length, before: sum(rows,'before'), after: sum(rows,'after'), offline: sum(rows,'offline')};
+  }).filter(g => g.n);
+  const max = Math.max(1, ...groups.map(g => Math.max(g.before, g.after)));
+  $('#brk').innerHTML = groups.length ? groups.map(g => `<div class="tg">
+      <div class="top2"><span class="lab"><b>${esc(g.label)}</b>${g.sub ? ` <span class="hint">${esc(g.sub)}</span>` : ''}</span><span class="pc">${fmt(g.n)} User</span></div>
+      <div class="brow"><span class="bl">ก่อนล่ม</span><div class="btrack"><div class="bf b" style="width:${g.before / max * 100}%"></div></div><span class="bv num">${fmt(g.before)}</span></div>
+      <div class="brow"><span class="bl">หลังล่ม</span><div class="btrack"><div class="bf a" style="width:${g.after / max * 100}%"></div></div><span class="bv num">${fmt(g.after)}</span></div>
+      <div class="off">Offline <b class="num">${fmt(g.offline)}</b></div></div>`).join('') : '<p class="empty">ยังไม่มีข้อมูล</p>';
+}
+
+function renderCards(list){
+  $('#cardsCount').textContent = fmt(list.length) + ' User';
+  if(!list.length){ $('#cards').innerHTML = '<p class="empty" style="grid-column:1/-1">ไม่พบ User ที่ตรงกับคำค้น</p>'; return; }
+  const max = Math.max(1, ...list.map(r => Math.max(r.before, r.after)));
+  $('#cards').innerHTML = list.map(r => {
+    const tags = r.offline ? `<span class="tag bad"><i>offline</i><b class="num">${fmt(r.offline)}</b></span>` : '';
+    return `<button type="button" class="ucard" data-user="${esc(r.id)}">
+      <span class="u-top"><span class="rk num">${pad2(r.rank)}</span><span class="u-name">${esc(r.name || '(ไม่มีชื่อ)')}</span>${r.type ? `<span class="u-type">${typeChips(r.type)}</span>` : ''}${r.note ? `<span class="u-note" title="${esc(r.note)}">${esc(r.note)}</span>` : ''}</span>
+      <span class="u-nums">
+        <span class="un b"><em>ก่อนล่ม</em><b class="num">${fmt(r.before)}</b></span>
+        <span class="arrow" aria-hidden="true">→</span>
+        <span class="un a"><em>หลังล่ม</em><b class="num">${fmt(r.after)}</b></span>
+        ${deltaChip(r.diff)}
+      </span>
+      <span class="u-bars">
+        <span class="ub b"><i style="width:${r.before / max * 100}%"></i></span>
+        <span class="ub a"><i style="width:${r.after / max * 100}%"></i></span>
+      </span>
+      <span class="u-tags">${tags || '<span class="tag"><i>ไม่มี Device offline</i></span>'}</span>
+    </button>`;
+  }).join('');
+}
+
+/* ---------- full table tab / edit mode ---------- */
+function sortAttr(key){ const s = S.sort; return s.key === key ? ` aria-sort="${s.dir<0?'descending':'ascending'}"` : ''; }
+function sbtn(key, label){
+  const s = S.sort, on = s.key === key;
+  return `<button type="button" data-sort="${key}">${esc(label)}${on?(s.dir<0?' ▼':' ▲'):''}</button>`;
+}
+function th(key, label, cls){ return `<th class="${cls||''}"${sortAttr(key)}>${sbtn(key, label)}</th>`; }
+let BARMAX = 1;
+function numCell(r, k){
+  const v = r[k], cls = v ? (k === 'offline' ? 'off' : '') : 'zero';
+  const bar = (k === 'before' || k === 'after')
+    ? `<div class="mb${k==='after'?' a':''}"><i style="width:${Math.min(100, v / BARMAX * 100)}%"></i></div>` : '';
+  return `<td class="r num ${k==='after'?'after-c':''} ${cls}"><span>${dash(v)}</span>${bar}</td>`;
+}
+
+function renderTable(ranked, list){
+  const t = $('#tbl');
+  if(S.editing){
+    const body = list.map((r,i) => `<tr>
+      <td class="s1 rank num">${i+1}</td>
+      <td class="s2"><input id="f-name-${esc(r.id)}" data-id="${esc(r.id)}" data-f="name" type="text" value="${esc(r.name)}" aria-label="ชื่อ User"></td>` +
+      COLS.map(c => c.t === 'type'
+        ? `<td><select id="f-type-${esc(r.id)}" data-id="${esc(r.id)}" data-f="type" aria-label="ประเภท ของ ${esc(r.name)}">${(TYPE_OPTS.includes(r.type) ? TYPE_OPTS : TYPE_OPTS.concat(r.type)).map(o => `<option value="${esc(o)}"${o===r.type?' selected':''}>${o || '— ไม่ระบุ —'}</option>`).join('')}</select></td>`
+        : c.t === 'text'
+        ? `<td><input id="f-${c.k}-${esc(r.id)}" data-id="${esc(r.id)}" data-f="${c.k}" type="text" value="${esc(r[c.k])}" aria-label="${esc(c.label)} ของ ${esc(r.name)}"></td>`
+        : `<td class="r"><input id="f-${c.k}-${esc(r.id)}" class="n" data-id="${esc(r.id)}" data-f="${c.k}" type="number" min="0" step="1" inputmode="numeric" value="${r[c.k]}" aria-label="${esc(c.label)} ของ ${esc(r.name)}"></td>`).join('') +
+      `<td class="r"><button type="button" class="btn danger sm${S.confirmId===r.id?' confirm':''}" data-del="${esc(r.id)}">${S.confirmId===r.id?'ยืนยันลบ':'ลบ'}</button></td></tr>`).join('');
+    t.innerHTML = `<thead><tr><th class="s1">ที่</th><th class="s2">ชื่อ User</th>${COLS.map(c => `<th class="${c.k==='after'?'after':''}${c.t==='num'?' r':''}">${esc(c.label)}</th>`).join('')}<th></th></tr></thead>
+      <tbody>${body || `<tr><td colspan="${COLS.length+3}" class="empty">ยังไม่มี User กรอกข้อมูลด้านล่างแล้วกด "เพิ่ม"</td></tr>`}</tbody>`;
+    return;
+  }
+  if(!list.length){ t.innerHTML = '<tbody><tr><td class="empty">ไม่พบ User ที่ตรงกับคำค้น</td></tr></tbody>'; return; }
+
+  BARMAX = Math.max(1, ...ranked.map(r => Math.max(r.before, r.after)));
+  const body = list.map(r => `<tr class="${r.id===S.selected?'sel':''}">
+    <td class="s1 rank num">${r.rank}</td>
+    <td class="s2"><button type="button" class="uname" data-user="${esc(r.id)}">${esc(r.name || '(ไม่มีชื่อ)')}</button></td>` +
+    COLS.map(c => c.t === 'type' ? `<td class="typ-c">${typeChips(r.type) || '<span class="zero">-</span>'}</td>` : c.t === 'text' ? `<td class="note-c">${esc(r.note)}</td>` : numCell(r, c.k)).join('') + '</tr>').join('');
+  const foot = list.length > 1
+    ? `<tfoot><tr><td class="s1">รวม</td><td class="s2">${fmt(list.length)} User</td>` +
+      COLS.map(c => c.t !== 'num' ? '<td></td>' : `<td class="r num ${c.k==='after'?'after-c':''}">${dash(sum(list,c.k))}</td>`).join('') + '</tr></tfoot>'
+    : '';
+  t.innerHTML = `<thead>
+      <tr class="grp"><th class="s1" rowspan="2">ลำดับที่</th><th class="s2" rowspan="2"${sortAttr('name')}>${sbtn('name','User')}</th>
+        <th rowspan="2">ประเภท</th><th class="pre" colspan="${NUMK.length-1}">ก่อนเซิร์ฟล่ม</th><th class="after">หลังเซิร์ฟล่ม</th><th rowspan="2">หมายเหตุ</th></tr>
+      <tr>${COLS.filter(c => c.t === 'num').map(c => th(c.k, c.label, 'r' + (c.k==='after'?' after':''))).join('')}</tr>
+    </thead><tbody>${body}</tbody>${foot}`;
+}
+
+/* ---------- add form ---------- */
+function buildAddForm(){
+  $('#addForm').innerHTML =
+    `<label class="grow" for="n-name">เพิ่ม User ใหม่<input id="n-name" type="text" placeholder="ชื่อ User" required></label>` +
+    COLS.map(c => c.t === 'type'
+      ? `<label for="n-type">ประเภท<select id="n-type">${TYPE_OPTS.map(o => `<option value="${esc(o)}">${o || '— ไม่ระบุ —'}</option>`).join('')}</select></label>`
+      : c.t === 'text'
+      ? `<label class="grow" for="n-${c.k}">${esc(c.label)}<input id="n-${c.k}" type="text"></label>`
+      : `<label for="n-${c.k}" title="${esc(c.label)}">${esc(c.label.length > 22 ? c.label.slice(0,22) + '…' : c.label)}<input id="n-${c.k}" class="n" type="number" min="0" step="1" inputmode="numeric" value="0"></label>`).join('') +
+    `<button class="btn primary" type="submit">เพิ่ม</button>`;
+}
+buildAddForm();
+
+/* ---------- interactions ---------- */
+function toggleUser(id){ S.selected = S.selected === id ? '' : id; render(); }
+$('#userSel').addEventListener('change', e => { S.selected = e.target.value; render(); });
+$('#q').addEventListener('input', e => { S.q = e.target.value; render(); });
+$('#sortSel').addEventListener('change', e => { if(!e.target.value) return; S.sort = {key:e.target.value, dir:defDir(e.target.value)}; render(); });
+$('#main').addEventListener('click', e => {
+  const tb = e.target.closest('[data-type]'); if(tb){ S.type = tb.dataset.type; S.selected = ''; render(); return; }
+  const v = e.target.closest('[data-view]');
+  if(v){ S.view = v.dataset.view; render(); return; }
+  const a = e.target.closest('[data-act]');
+  if(a){ if(a.dataset.act === 'back'){ S.selected = ''; render(); } return; }
+  const s = e.target.closest('[data-sort]');
+  if(s){ const k = s.dataset.sort; S.sort = {key:k, dir: S.sort.key === k ? -S.sort.dir : defDir(k)}; render(); return; }
+  const u = e.target.closest('[data-user]');
+  if(u){ toggleUser(u.dataset.user); return; }
+  const d = e.target.closest('[data-del]');
+  if(d){
+    const id = d.dataset.del;
+    if(S.confirmId === id){ S.confirmId = ''; render(); queue(id, () => S.col.doc(id).delete()); }
+    else { S.confirmId = id; render(); clearTimeout(S.confirmT); S.confirmT = setTimeout(() => { S.confirmId = ''; if(S.editing && !tableFocused()) render(); }, 4000); }
+  }
+});
+$('#state').addEventListener('click', e => {
+  const a = e.target.closest('[data-act]'); if(!a) return;
+  if(a.dataset.act === 'pick') $('#file').click();
+  if(a.dataset.act === 'edit') toggleEdit();
+});
+$('#tbl').addEventListener('change', e => {
+  const el = e.target; if(!el.dataset || !el.dataset.id) return;
+  const id = el.dataset.id, f = el.dataset.f, cur = S.docs.find(d => d.id === id);
+  if(!cur) return;
+  let v;
+  if(f === 'name'){
+    v = el.value.trim();
+    if(!v){ toast('ชื่อ User ว่างไม่ได้'); el.value = cur.name; return; }
+    if(v === cur.name) return;
+  } else if(f === 'note' || f === 'type'){
+    v = el.value.trim();
+    if(v === String(cur[f] ?? '')) return;
+  } else {
+    v = toInt(el.value); el.value = v;
+    if(v === toInt(cur[f])) return;
+  }
+  queue(id, () => S.col.doc(id).update({[f]: v, updatedAt: Date.now()}));
+});
+$('#tbl').addEventListener('focusout', () => {
+  setTimeout(() => { if(S.pending && !tableFocused()){ S.pending = false; render(); } }, 0);
+});
+function toggleEdit(){ S.editing = !S.editing; S.confirmId = ''; S.pending = false; if(S.editing) cancelImport(); render(); }
+$('#edit').addEventListener('click', toggleEdit);
+$('#addForm').addEventListener('submit', async e => {
+  e.preventDefault();
+  const name = $('#n-name').value.trim();
+  if(!name){ $('#n-name').focus(); return; }
+  const now = Date.now(), doc = {name, type: $('#n-type').value, note: $('#n-note').value.trim(), createdAt: now, updatedAt: now};
+  NUMK.forEach(k => doc[k] = toInt($('#n-'+k).value));
+  try{
+    await S.col.add(doc);
+    $('#n-name').value = ''; $('#n-note').value = ''; $('#n-type').value = ''; NUMK.forEach(k => $('#n-'+k).value = 0); $('#n-name').focus();
+  }catch(err){ writeError(err); }
+});
+$('#copy').addEventListener('click', async () => {
+  const {list} = visible();
+  if(!list.length){ toast('ยังไม่มีข้อมูลให้คัดลอก'); return; }
+  const head = ['ลำดับที่','User'].concat(COLS.map(c => c.label)).join('\t');
+  const tsv = [head].concat(list.map(r => [r.rank, r.name].concat(COLS.map(c => r[c.k])).join('\t'))).join('\n');
+  try{ await navigator.clipboard.writeText(tsv); toast('คัดลอกแล้ว วางใน Excel หรือสไลด์ได้เลย'); }
+  catch(_){
+    const ta = document.createElement('textarea'); ta.value = tsv; document.body.appendChild(ta); ta.select();
+    let ok = false; try{ ok = document.execCommand('copy'); }catch(_){}
+    ta.remove(); toast(ok ? 'คัดลอกแล้ว' : 'คัดลอกไม่ได้ ลองลากเลือกข้อความในตารางเอง');
+  }
+});
+
+/* ---------- Excel import ---------- */
+$('#pick').addEventListener('click', () => $('#file').click());
+$('#file').addEventListener('change', e => { if(e.target.files[0]) readFile(e.target.files[0]); e.target.value = ''; });
+/* drag a file anywhere on the page: a full-screen drop hint appears only while dragging */
+let dragDepth = 0;
+const hasFiles = e => !!(e.dataTransfer && Array.prototype.indexOf.call(e.dataTransfer.types || [], 'Files') >= 0);
+window.addEventListener('dragenter', e => { if(!hasFiles(e)) return; e.preventDefault(); if(!S.canWrite) return; dragDepth++; $('#dz').hidden = false; });
+window.addEventListener('dragover', e => { if(hasFiles(e)) e.preventDefault(); });
+window.addEventListener('dragleave', e => { if(!hasFiles(e) || !S.canWrite) return; dragDepth = Math.max(0, dragDepth - 1); if(!dragDepth) $('#dz').hidden = true; });
+window.addEventListener('drop', e => {
+  if(!hasFiles(e)) return;
+  e.preventDefault(); dragDepth = 0; $('#dz').hidden = true;
+  const f = e.dataTransfer.files[0]; if(f && S.canWrite) readFile(f);
+});
+
+const norm = h => String(h ?? '').replace(/\s+/g,' ').trim();
+const DETECT = [
+  ['type',    /ประเภท|^type$|oms|self/i],
+  ['after',   /หลัง|after/i],
+  ['offline', /offline|ออฟไลน์/i],
+  ['note',    /หมายเหตุ|note|remark/i],
+  ['seq',     /ลำดับ|^no\.?$|^#$/i],
+  ['user',    /user|ผู้ใช้|ลูกค้า|ชื่อ|customer|client/i],
+  ['before',  /^จำนวน ?device$|before|ก่อน|total|device/i]
+];
+function guessMap(h){
+  const used = new Set(), map = {};
+  DETECT.forEach(([k, re]) => { const x = h.find(c => !used.has(c) && re.test(c)); if(x){ used.add(x); map[k] = x; } else map[k] = ''; });
+  return map;
+}
+function headerRowIndex(aoa){
+  for(let i = 0; i < Math.min(aoa.length, 12); i++){
+    if(aoa[i].filter(c => norm(c) !== '').length >= 3) return i;
+  }
+  return 0;
+}
+function readFile(f){
+  if(typeof XLSX === 'undefined'){ toast('โหลดตัวอ่านไฟล์ไม่สำเร็จ ลองรีเฟรชหน้านี้'); return; }
+  const isText = /\.(csv|tsv)$/i.test(f.name), fr = new FileReader();
+  fr.onerror = () => toast('อ่านไฟล์ไม่ได้ ลองบันทึกเป็น .xlsx ใหม่');
+  fr.onload = () => {
+    try{
+      let wb;
+      if(isText){
+        let txt = new TextDecoder('utf-8').decode(fr.result);
+        if(txt.indexOf(String.fromCharCode(0xFFFD)) >= 0) txt = new TextDecoder('windows-874').decode(fr.result);
+        wb = XLSX.read(txt, {type:'string'});
+      } else wb = XLSX.read(fr.result, {type:'array'});
+      const aoa = XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]], {header:1, defval:'', blankrows:false});
+      const hi = headerRowIndex(aoa);
+      if(aoa.length < hi + 2){ toast('ไฟล์นี้ไม่มีข้อมูลใต้หัวตาราง'); return; }
+      const seen = {}, headers = aoa[hi].map((h,i) => { let n = norm(h) || `คอลัมน์ ${i+1}`; if(seen[n]){ seen[n]++; n += ' ('+seen[n]+')'; } else seen[n] = 1; return n; });
+      const rows = aoa.slice(hi + 1).map(r => Object.fromEntries(headers.map((h,i) => [h, r[i] ?? ''])));
+      S.editing = false;
+      S.imp = {name:f.name, headers, rows, map: guessMap(headers)};
+      render();
+      renderImport();
+      $('#imp').scrollIntoView({behavior:'smooth', block:'nearest'});
+    }catch(err){ toast('อ่านไฟล์ไม่สำเร็จ ตรวจว่าเป็นไฟล์ Excel หรือ CSV'); }
+  };
+  fr.readAsArrayBuffer(f);
+}
+function computeImport(){
+  const {rows, map} = S.imp, g = new Map(), res = {items:[], fallback:0};
+  const TOTAL = /^(รวม|total|sum)/i;
+  rows.forEach(r => {
+    const get = k => map[k] ? r[map[k]] : '';
+    let name = norm(get('user'));
+    const seqRaw = norm(get('seq'));
+    if(TOTAL.test(name) || TOTAL.test(seqRaw)) return;
+    const seq = /^\d+$/.test(seqRaw) ? Number(seqRaw) : null;
+    if(!name){
+      if(seq === null) return;
+      if(!norm(get('note')) && !NUMK.some(k => map[k] && toInt(get(k)) > 0)) return;
+      name = 'User ' + seq; res.fallback++;
+    }
+    const x = g.get(name) || {name, note:'', type:'', seq, before:0, offline:0, after:0};
+    NUMK.forEach(k => { x[k] += map[k] ? toInt(get(k)) : 0; });
+    const tp = normType(get('type')); if(tp) x.type = normType(x.type + ' ' + tp);
+    const n = norm(get('note'));
+    if(n && !x.note.split(' / ').includes(n)) x.note = x.note ? x.note + ' / ' + n : n;
+    g.set(name, x);
+  });
+  res.items = [...g.values()];
+  return res;
+}
+const MAP_LABELS = [['user','User'],['seq','ลำดับที่'],['type','ประเภท'],['note',LABEL.note],['before',LABEL.before],['offline',LABEL.offline],['after',LABEL.after]];
+function renderImport(){
+  const box = $('#imp');
+  if(!S.imp || !S.canWrite){ box.hidden = true; return; }
+  box.hidden = false;
+  $('#impTitle').textContent = 'ตรวจไฟล์ก่อนนำเข้า: ' + S.imp.name;
+  $('#i-map').innerHTML = MAP_LABELS.map(([k,l]) =>
+    `<label class="f" for="i-${k}">${esc(l)}<select id="i-${k}" data-k="${k}"><option value="">— ไม่มี (นับเป็น 0) —</option>${S.imp.headers.map(h => `<option value="${esc(h)}"${h===S.imp.map[k]?' selected':''}>${esc(h)}</option>`).join('')}</select></label>`).join('');
+  $('#i-replace').checked = false;
+  renderPreview();
+}
+function renderPreview(){
+  if(!S.imp) return;
+  const {items, fallback} = computeImport();
+  $('#impCount').textContent = `พบ ${fmt(items.length)} User`;
+  $('#i-go').disabled = !items.length || S.importing;
+  $('#i-warn').textContent = fallback ? `${fmt(fallback)} แถวไม่มีชื่อ User ระบบตั้งชื่อ "User <ลำดับที่>" ให้ แก้ชื่อได้ภายหลังในโหมดแก้ไขข้อมูล` : '';
+  $('#i-prev').innerHTML = items.length
+    ? `<table><thead><tr><th>User</th><th>ประเภท</th><th class="r">จำนวน Device</th><th class="r">offline ทั้งหมด</th><th class="r">หลังเซิร์ฟล่ม</th><th>หมายเหตุ</th></tr></thead><tbody>` +
+      items.slice(0,5).map(x => `<tr><td>${esc(x.name)}</td><td>${esc(x.type)}</td><td class="r num">${dash(x.before)}</td><td class="r num">${dash(x.offline)}</td><td class="r num">${dash(x.after)}</td><td class="hint">${esc(x.note)}</td></tr>`).join('') +
+      (items.length > 5 ? `<tr><td colspan="6" class="hint">และอีก ${fmt(items.length-5)} User</td></tr>` : '') + '</tbody></table>'
+    : '<p class="hint">ยังไม่พบแถวข้อมูล เปิด "ตรวจว่าระบบจับคอลัมน์ถูกไหม" แล้วเลือกคอลัมน์ User หรือ ลำดับที่</p>';
+}
+$('#i-map').addEventListener('change', e => { const k = e.target.dataset.k; if(!k || !S.imp) return; S.imp.map[k] = e.target.value; renderPreview(); });
+function cancelImport(){ S.imp = null; renderImport(); }
+$('#i-cancel').addEventListener('click', cancelImport);
+$('#i-go').addEventListener('click', async () => {
+  if(!S.imp || S.importing) return;
+  const {items} = computeImport();
+  if(!items.length){ toast('ไม่พบแถวที่นำเข้าได้'); return; }
+  const replace = $('#i-replace').checked, now = Date.now();
+  S.importing = true; $('#i-go').disabled = true; $('#i-go').textContent = 'กำลังนำเข้า…';
+  let added = 0, updated = 0, removed = 0, failed = false;
+  try{
+    const byName = new Map();
+    S.docs.forEach(d => { const n = String(d.name ?? '').trim(); if(!byName.has(n)) byName.set(n, d); });
+    for(const [i, it] of items.entries()){
+      const data = {updatedAt: now};
+      if(it.note) data.note = it.note;   /* ไม่เขียนทับหมายเหตุ/ประเภทที่กรอกไว้ ด้วยช่องว่าง */
+      if(it.type) data.type = it.type;
+      const full = {note: '', type: '', ...data};
+      NUMK.forEach(k => data[k] = it[k]);
+      const ex = byName.get(it.name);
+      if(ex){
+        const same = (!it.note || String(ex.note ?? '') === it.note) && (!it.type || normType(ex.type) === it.type) && NUMK.every(k => toInt(ex[k]) === it[k]);
+        if(!same){ await S.col.doc(ex.id).update(data); updated++; }
+      } else {
+        await S.col.add({...full, name: it.name, createdAt: now + i}); added++;
+      }
+    }
+    if(replace){
+      const keep = new Set(items.map(i => i.name));
+      for(const d of S.docs){ if(!keep.has(String(d.name ?? '').trim())){ await S.col.doc(d.id).delete(); removed++; } }
+    }
+  }catch(err){ failed = true; writeError(err); }
+  S.importing = false; $('#i-go').textContent = 'นำเข้า';
+  if(failed){ renderPreview(); return; }
+  S.imp = null; renderImport();
+  toast(`นำเข้าแล้ว: เพิ่ม ${added}, อัปเดต ${updated}` + (replace ? `, ลบ ${removed}` : ''));
+});
+
+/* ---------- storage (Supabase) ---------- */
+/* ใส่ค่าจากโปรเจกต์ Supabase ของคุณ: Project Settings → API (ใช้ anon / publishable key เท่านั้น ห้ามใส่ service_role) */
+const SUPABASE_URL = 'ใส่ Project URL ตรงนี้';
+const SUPABASE_KEY = 'ใส่ anon key ตรงนี้';
+/* true = ใครมีลิงก์ก็ดูตัวเลขได้โดยไม่ล็อกอิน (แก้ไขต้องล็อกอิน) / false = ต้องล็อกอินก่อนทุกอย่าง
+   ต้องตรงกับ SQL ที่รัน (ดูไฟล์ supabase-setup.sql) */
+const PUBLIC_VIEW = false;
+
+const TABLE = 'device_summary';
+const TO_DB = {before:'before_count', after:'after_count', createdAt:'created_ms', updatedAt:'updated_ms'};
+const FROM_DB = {before_count:'before', after_count:'after', created_ms:'createdAt', updated_ms:'updatedAt'};
+const toDb = o => Object.fromEntries(Object.entries(o).map(([k,v]) => [TO_DB[k] || k, v]));
+const fromDb = row => { const o = {}; for(const k in row) o[FROM_DB[k] || k] = row[k]; return o; };
+const wrapErr = error => { if(!error) return; const e = new Error(error.message); e.code = (error.code === '42501' || error.status === 401 || error.status === 403) ? 'invalid_argument' : error.code; throw e; };
+
+let sb = null, loadedFor = null, chan = null;
+function makeCol(){
+  const t = () => sb.from(TABLE);
+  return {
+    async add(doc){ const {error} = await t().insert(toDb(doc)); wrapErr(error); },
+    doc: id => ({
+      async update(data){ const {error} = await t().update(toDb(data)).eq('id', id); wrapErr(error); },
+      async delete(){ const {error} = await t().delete().eq('id', id); wrapErr(error); }
+    })
+  };
+}
+async function loadAll(){
+  const {data, error} = await sb.from(TABLE).select('*').order('created_ms', {ascending:true});
+  if(error){ S.loaded = true; S.failed = 'โหลดข้อมูลไม่สำเร็จ: ' + error.message; render(); return; }
+  S.docs = data.map(fromDb); S.failed = ''; S.loaded = true;
+  if(S.editing && tableFocused()){ S.pending = true; return; }
+  render();
+}
+function subscribe(){
+  if(chan){ sb.removeChannel(chan); chan = null; }
+  chan = sb.channel('device_summary_live').on('postgres_changes', {event:'*', schema:'public', table:TABLE}, () => loadAll()).subscribe();
+}
+function showLogin(on, closable){ $('#login').hidden = !on; $('#l-close').hidden = !closable; if(on) setTimeout(() => $('#l-email').focus(), 0); }
+function paintAuth(session){
+  S.canWrite = !!session;
+  const b = $('#auth'); b.hidden = false; b.textContent = session ? 'ออกจากระบบ' : 'เข้าสู่ระบบ';
+  if(!session){ S.editing = false; S.imp = null; }
+}
+async function onSession(session){
+  paintAuth(session);
+  if(!session && !PUBLIC_VIEW){ S.docs = []; S.loaded = true; loadedFor = null; if(chan){ sb.removeChannel(chan); chan = null; } showLogin(true, false); render(); renderImport(); return; }
+  showLogin(false);
+  const key = session ? session.user.id : 'anon';
+  if(loadedFor !== key){ loadedFor = key; S.loaded = false; S.col = makeCol(); render(); await loadAll(); subscribe(); }
+  else render();
+  renderImport();
+}
+$('#auth').addEventListener('click', async () => {
+  if(S.canWrite){ await sb.auth.signOut(); toast('ออกจากระบบแล้ว'); }
+  else showLogin(true, PUBLIC_VIEW);
+});
+$('#l-close').addEventListener('click', () => showLogin(false));
+$('#loginForm').addEventListener('submit', async e => {
+  e.preventDefault();
+  const go = $('#l-go'); go.disabled = true; $('#l-err').textContent = '';
+  const {error} = await sb.auth.signInWithPassword({email: $('#l-email').value.trim(), password: $('#l-pass').value});
+  go.disabled = false;
+  if(error){ $('#l-err').textContent = 'อีเมลหรือรหัสผ่านไม่ถูกต้อง'; return; }
+  $('#l-pass').value = '';
+});
+async function start(){
+  render();
+  if(!window.supabase || SUPABASE_URL.indexOf('http') !== 0){
+    S.loaded = true;
+    S.failed = !window.supabase ? 'โหลดไลบรารี Supabase ไม่สำเร็จ ตรวจอินเทอร์เน็ตแล้วรีเฟรช' : 'ยังไม่ได้ใส่ SUPABASE_URL และ SUPABASE_KEY ในไฟล์ (ดูบรรทัดบนของส่วน storage)';
+    render(); return;
+  }
+  sb = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
+  sb.auth.onAuthStateChange((_ev, session) => { setTimeout(() => onSession(session), 0); });
+}
+start();
+</script>
