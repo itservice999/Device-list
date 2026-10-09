@@ -223,6 +223,8 @@ th.s1,th.s2,thead tr.grp th.s1,thead tr.grp th.s2{background:var(--panel);color:
 .u-type+.u-note{margin-left:8px;max-width:30%}
 .tp{font-size:.72rem;font-weight:600;letter-spacing:.02em;border-radius:99px;padding:1px 9px;border:1px solid var(--line-2);color:var(--muted);white-space:nowrap}
 .tp.oms{color:var(--cy);border-color:var(--cy);background:var(--cy-soft)}
+.tp.nd{color:var(--steel);border-color:var(--steel)}
+.tp.cn{color:var(--bad);border-color:var(--bad);background:var(--bad-soft)}
 .tp.ss{color:var(--am);border-color:var(--am);background:var(--am-soft)}
 .u-top .u-note{margin-left:0}
 .typehint{font-size:.82rem;color:var(--muted)}
@@ -256,6 +258,17 @@ td input.n{text-align:right;width:96px;font-family:var(--mono)}
 #login input{background:var(--panel-2);border:1px solid var(--line-2);color:var(--fg);border-radius:10px;padding:10px 12px;font:inherit}
 #login input:focus{outline:2px solid var(--cy);border-color:var(--cy)}
 #login .err{color:var(--bad);min-height:1.2em;font-size:.88rem}
+.editbar{display:flex;flex-wrap:wrap;align-items:center;gap:10px;padding:12px 16px;border-bottom:1px solid var(--line);background:var(--am-soft)}
+.editbar .grow{flex:1}
+td input.chg,td select.chg{border-color:var(--am);box-shadow:0 0 0 2px var(--am-soft)}
+tr.del td{opacity:.45}
+tr.del td:not(:last-child) input,tr.del td:not(:last-child) select{text-decoration:line-through}
+#cfm{position:fixed;inset:0;z-index:60;display:flex;align-items:center;justify-content:center;padding:16px;background:rgba(2,6,12,.66)}
+#cfm[hidden]{display:none}
+#cfm .box{width:min(420px,100%);background:var(--panel);border:1px solid var(--line-2);border-radius:16px;padding:24px;display:flex;flex-direction:column;gap:12px;box-shadow:0 30px 80px -30px var(--shadow)}
+#cfm h2{margin:0;font-family:var(--display);font-size:1.25rem}
+#cfm p{margin:0;color:var(--muted)}
+#cfm .btns{display:flex;flex-wrap:wrap;gap:10px;margin-top:6px}
 </style>
 
 <div id="login" hidden><form id="loginForm" autocomplete="on">
@@ -310,12 +323,14 @@ td input.n{text-align:right;width:96px;font-family:var(--mono)}
         <button type="button" data-type="" aria-pressed="true" title="ทุกประเภท">ทั้งหมด</button>
         <button type="button" data-type="OMS" aria-pressed="false" title="OMS = เราเป็นฝ่ายส่งสื่อเอง">OMS</button>
         <button type="button" data-type="Self-Serve" aria-pressed="false" title="Self-Serve = ลูกค้าส่งสื่อเอง">Self-Serve</button>
+        <button type="button" data-type="ND" aria-pressed="false" title="ประเภท ND">ND</button>
+        <button type="button" data-type="Cancel" aria-pressed="false" title="ประเภท Cancel">Cancel</button>
       </div>
       <div class="seg" role="tablist" aria-label="มุมมอง">
         <button type="button" role="tab" data-view="dash" aria-selected="true">แดชบอร์ด</button>
         <button type="button" role="tab" data-view="table" aria-selected="false">ตาราง</button>
       </div>
-      <button class="btn" id="copy" type="button">คัดลอกตาราง</button>
+      <button class="btn" id="export" type="button">Export Excel</button>
     </div>
 
     <div class="scope" id="scope"></div>
@@ -339,11 +354,17 @@ td input.n{text-align:right;width:96px;font-family:var(--mono)}
 
     <section class="panel" id="p-table">
       <div class="panel-h"><h2 id="ptitle">ตารางข้อมูลเต็ม</h2></div>
+      <div class="editbar" id="editBar" hidden><span id="editMsg"></span><span class="grow"></span><button class="btn primary sm" id="saveBtn" type="button">บันทึก</button><button class="btn sm" id="cancelEdit" type="button">ยกเลิกการแก้ไข</button></div>
       <div class="scroll"><table id="tbl" class="wide"></table></div>
       <form id="addForm" hidden autocomplete="off"></form>
     </section>
   </div>
 </div>
+<div id="cfm" hidden role="dialog" aria-modal="true" aria-labelledby="cfmT"><div class="box">
+  <h2 id="cfmT">บันทึกการเปลี่ยนแปลงไหม</h2>
+  <p>มี <b id="cfmN">0</b> รายการที่ยังไม่ได้บันทึก</p>
+  <div class="btns"><button class="btn primary" id="cfmSave" type="button">บันทึก</button><button class="btn danger" id="cfmDiscard" type="button">ไม่บันทึก</button><button class="btn" id="cfmBack" type="button">กลับไปแก้ต่อ</button></div>
+</div></div>
 <div id="toast" role="status"></div>
 
 <script>
@@ -365,13 +386,16 @@ const COLS = [
 ];
 /* ประเภท: OMS = เราเป็นฝ่ายส่งสื่อเอง, Self-Serve = ลูกค้าส่งสื่อเอง (User เดียวมีได้ทั้งสองแบบ) */
 const TBOTH = 'OMS + Self-Serve';
-const TYPE_OPTS = ['', 'OMS', 'Self-Serve', TBOTH];
+const TYPE_OPTS = ['', 'OMS', 'Self-Serve', TBOTH, 'ND', 'Cancel'];
 function normType(v){
-  const t = String(v ?? '').toLowerCase(), o = /oms/.test(t), c = /self|ลูกค้าส่ง/.test(t);
+  const t = String(v ?? '').trim().toLowerCase();
+  if(t === 'nd') return 'ND';
+  if(/cancel|ยกเลิก/.test(t)) return 'Cancel';
+  const o = /oms/.test(t), c = /self|ลูกค้าส่ง/.test(t);
   if(o && c) return TBOTH; if(o) return 'OMS'; if(c) return 'Self-Serve';
   return String(v ?? '').replace(/\s+/g,' ').trim();
 }
-const typeMatch = (r, f) => !f || (f === 'OMS' ? (r.type === 'OMS' || r.type === TBOTH) : (r.type === 'Self-Serve' || r.type === TBOTH));
+const typeMatch = (r, f) => !f || (f === 'OMS' ? (r.type === 'OMS' || r.type === TBOTH) : f === 'Self-Serve' ? (r.type === 'Self-Serve' || r.type === TBOTH) : r.type === f);
 const NUMK = COLS.filter(c => c.t === 'num').map(c => c.k);
 const LABEL = Object.fromEntries(COLS.map(c => [c.k, c.label]));
 const SORTS = [['before','จำนวน Device ก่อนเซิร์ฟล่ม'],['after','จำนวนหลังเซิร์ฟล่ม'],['offline','Offline มากที่สุด'],['diff','ลดลงมากที่สุด (หลัง − ก่อน)'],['name','ชื่อ User']];
@@ -381,6 +405,7 @@ const S = {
   db: null, col: null, canWrite: false, editing: false,
   docs: [], loaded: false, failed: '',
   selected: '', q: '', type: '', view: 'dash', sort: {key:'before', dir:-1}, confirmId: '', pending: false,
+  draft: {}, del: new Set(), saving: false,
   imp: null, importing: false
 };
 
@@ -394,6 +419,7 @@ function queue(id, fn){
 function writeError(e){
   const code = e && e.code;
   if(code === 'invalid_argument'){ S.canWrite = false; S.editing = false; S.imp = null; toast('บัญชีนี้แก้ข้อมูลไม่ได้ ดูได้อย่างเดียว'); render(); renderImport(); }
+  else if(code === '23505') toast('ชื่อ User ซ้ำกับรายการอื่น');
   else if(code === 'quota_exceeded') toast('พื้นที่เก็บข้อมูลเต็ม ลบ User ที่ไม่ใช้ก่อน');
   else toast('บันทึกไม่สำเร็จ ลองอีกครั้ง');
 }
@@ -408,8 +434,9 @@ $('#theme').addEventListener('click', () => {
 
 /* ---------- derive ---------- */
 function allRows(){
-  return S.docs.map(d => {
-    const r = {id:d.id, name:String(d.name ?? ''), note:String(d.note ?? ''), type:normType(d.type), createdAt:Number(d.createdAt) || 0, updatedAt:Number(d.updatedAt) || 0};
+  return S.docs.map(d0 => {
+    const dr = S.editing ? S.draft[d0.id] : null, d = dr ? {...d0, ...dr} : d0;
+    const r = {deleted: S.editing && S.del.has(d0.id), id:d.id, name:String(d.name ?? ''), note:String(d.note ?? ''), type:normType(d.type), createdAt:Number(d.createdAt) || 0, updatedAt:Number(d.updatedAt) || 0};
     NUMK.forEach(k => r[k] = toInt(d[k]));
     r.diff = r.after - r.before;
     return r;
@@ -448,7 +475,7 @@ function ring(p){
 function typeChips(t){
   if(!t) return '';
   const o = `<span class="tp oms" title="เราเป็นฝ่ายส่งสื่อเอง">OMS</span>`, c = `<span class="tp ss" title="ลูกค้าส่งสื่อเอง">Self-Serve</span>`;
-  return t === TBOTH ? o + c : t === 'OMS' ? o : t === 'Self-Serve' ? c : `<span class="tp">${esc(t)}</span>`;
+  return t === TBOTH ? o + c : t === 'OMS' ? o : t === 'Self-Serve' ? c : t === 'ND' ? '<span class="tp nd">ND</span>' : t === 'Cancel' ? '<span class="tp cn">Cancel</span>' : `<span class="tp">${esc(t)}</span>`;
 }
 function render(){
   const {ranked, list} = visible();
@@ -481,6 +508,8 @@ function render(){
   $('#cards-wrap').hidden = !(dashOn && !S.selected);
   $('#p-table').hidden = !(ed || S.view === 'table');
   $('#addForm').hidden = !(ed && w);
+  $('#editBar').hidden = !(ed && w);
+  if(ed) paintDirty();
   $('#ptitle').textContent = ed ? 'แก้ไขข้อมูล' : 'ตารางข้อมูลเต็ม';
 
   if(!ed){
@@ -534,7 +563,7 @@ function renderCompare(list){
 }
 
 function renderBreak(pool){
-  const groups = [['OMS','OMS','เราส่งสื่อเอง'],['Self-Serve','Self-Serve','ลูกค้าส่งสื่อเอง'],[TBOTH,'OMS + Self-Serve','มีทั้งสองแบบ'],['','ไม่ระบุประเภท','']].map(([key, label, sub]) => {
+  const groups = [['OMS','OMS','เราส่งสื่อเอง'],['Self-Serve','Self-Serve','ลูกค้าส่งสื่อเอง'],[TBOTH,'OMS + Self-Serve','มีทั้งสองแบบ'],['ND','ND',''],['Cancel','Cancel',''],['','ไม่ระบุประเภท','']].map(([key, label, sub]) => {
     const rows = pool.filter(r => key === '' ? (!r.type) : r.type === key);
     return {label: key === '' ? 'ไม่ระบุประเภท' : label, sub, n: rows.length, before: sum(rows,'before'), after: sum(rows,'after'), offline: sum(rows,'offline')};
   }).filter(g => g.n);
@@ -587,15 +616,15 @@ function numCell(r, k){
 function renderTable(ranked, list){
   const t = $('#tbl');
   if(S.editing){
-    const body = list.map((r,i) => `<tr>
+    const body = list.map((r,i) => `<tr class="${r.deleted?'del':''}">
       <td class="s1 rank num">${i+1}</td>
-      <td class="s2"><input id="f-name-${esc(r.id)}" data-id="${esc(r.id)}" data-f="name" type="text" value="${esc(r.name)}" aria-label="ชื่อ User"></td>` +
+      <td class="s2"><input id="f-name-${esc(r.id)}" data-id="${esc(r.id)}" data-f="name" type="text" value="${esc(r.name)}" aria-label="ชื่อ User"${r.deleted?' disabled':''}></td>` +
       COLS.map(c => c.t === 'type'
-        ? `<td><select id="f-type-${esc(r.id)}" data-id="${esc(r.id)}" data-f="type" aria-label="ประเภท ของ ${esc(r.name)}">${(TYPE_OPTS.includes(r.type) ? TYPE_OPTS : TYPE_OPTS.concat(r.type)).map(o => `<option value="${esc(o)}"${o===r.type?' selected':''}>${o || '— ไม่ระบุ —'}</option>`).join('')}</select></td>`
+        ? `<td><select id="f-type-${esc(r.id)}" data-id="${esc(r.id)}" data-f="type" aria-label="ประเภท ของ ${esc(r.name)}"${r.deleted?' disabled':''}>${(TYPE_OPTS.includes(r.type) ? TYPE_OPTS : TYPE_OPTS.concat(r.type)).map(o => `<option value="${esc(o)}"${o===r.type?' selected':''}>${o || '— ไม่ระบุ —'}</option>`).join('')}</select></td>`
         : c.t === 'text'
-        ? `<td><input id="f-${c.k}-${esc(r.id)}" data-id="${esc(r.id)}" data-f="${c.k}" type="text" value="${esc(r[c.k])}" aria-label="${esc(c.label)} ของ ${esc(r.name)}"></td>`
-        : `<td class="r"><input id="f-${c.k}-${esc(r.id)}" class="n" data-id="${esc(r.id)}" data-f="${c.k}" type="number" min="0" step="1" inputmode="numeric" value="${r[c.k]}" aria-label="${esc(c.label)} ของ ${esc(r.name)}"></td>`).join('') +
-      `<td class="r"><button type="button" class="btn danger sm${S.confirmId===r.id?' confirm':''}" data-del="${esc(r.id)}">${S.confirmId===r.id?'ยืนยันลบ':'ลบ'}</button></td></tr>`).join('');
+        ? `<td><input id="f-${c.k}-${esc(r.id)}" data-id="${esc(r.id)}" data-f="${c.k}" type="text" value="${esc(r[c.k])}" aria-label="${esc(c.label)} ของ ${esc(r.name)}"${r.deleted?' disabled':''}></td>`
+        : `<td class="r"><input id="f-${c.k}-${esc(r.id)}" class="n" data-id="${esc(r.id)}" data-f="${c.k}" type="number" min="0" step="1" inputmode="numeric" value="${r[c.k]}" aria-label="${esc(c.label)} ของ ${esc(r.name)}"${r.deleted?' disabled':''}></td>`).join('') +
+      `<td class="r"><button type="button" class="btn ${r.deleted?'':'danger '}sm" data-del="${esc(r.id)}">${r.deleted?'ยกเลิกลบ':'ลบ'}</button></td></tr>`).join('');
     t.innerHTML = `<thead><tr><th class="s1">ที่</th><th class="s2">ชื่อ User</th>${COLS.map(c => `<th class="${c.k==='after'?'after':''}${c.t==='num'?' r':''}">${esc(c.label)}</th>`).join('')}<th></th></tr></thead>
       <tbody>${body || `<tr><td colspan="${COLS.length+3}" class="empty">ยังไม่มี User กรอกข้อมูลด้านล่างแล้วกด "เพิ่ม"</td></tr>`}</tbody>`;
     return;
@@ -621,7 +650,7 @@ function renderTable(ranked, list){
 /* ---------- add form ---------- */
 function buildAddForm(){
   $('#addForm').innerHTML =
-    `<label class="grow" for="n-name">เพิ่ม User ใหม่<input id="n-name" type="text" placeholder="ชื่อ User" required></label>` +
+    `<label class="grow" for="n-name">เพิ่ม User ใหม่ (บันทึกทันทีเมื่อกด เพิ่ม)<input id="n-name" type="text" placeholder="ชื่อ User" required></label>` +
     COLS.map(c => c.t === 'type'
       ? `<label for="n-type">ประเภท<select id="n-type">${TYPE_OPTS.map(o => `<option value="${esc(o)}">${o || '— ไม่ระบุ —'}</option>`).join('')}</select></label>`
       : c.t === 'text'
@@ -649,8 +678,8 @@ $('#main').addEventListener('click', e => {
   const d = e.target.closest('[data-del]');
   if(d){
     const id = d.dataset.del;
-    if(S.confirmId === id){ S.confirmId = ''; render(); queue(id, () => S.col.doc(id).delete()); }
-    else { S.confirmId = id; render(); clearTimeout(S.confirmT); S.confirmT = setTimeout(() => { S.confirmId = ''; if(S.editing && !tableFocused()) render(); }, 4000); }
+    if(S.del.has(id)) S.del.delete(id); else S.del.add(id);
+    render();
   }
 });
 $('#state').addEventListener('click', e => {
@@ -660,27 +689,69 @@ $('#state').addEventListener('click', e => {
 });
 $('#tbl').addEventListener('change', e => {
   const el = e.target; if(!el.dataset || !el.dataset.id) return;
-  const id = el.dataset.id, f = el.dataset.f, cur = S.docs.find(d => d.id === id);
-  if(!cur) return;
-  let v;
+  const id = el.dataset.id, f = el.dataset.f, base = S.docs.find(d => d.id === id);
+  if(!base) return;
+  const dr = S.draft[id] || {}, shown = f in dr ? dr[f] : base[f];
+  let v, orig;
   if(f === 'name'){
-    v = el.value.trim();
-    if(!v){ toast('ชื่อ User ว่างไม่ได้'); el.value = cur.name; return; }
-    if(v === cur.name) return;
-  } else if(f === 'note' || f === 'type'){
-    v = el.value.trim();
-    if(v === String(cur[f] ?? '')) return;
-  } else {
-    v = toInt(el.value); el.value = v;
-    if(v === toInt(cur[f])) return;
-  }
-  queue(id, () => S.col.doc(id).update({[f]: v, updatedAt: Date.now()}));
+    v = el.value.trim(); orig = String(base.name ?? '').trim();
+    if(!v){ toast('ชื่อ User ว่างไม่ได้'); el.value = shown; return; }
+    if(allRows().some(r => r.id !== id && r.name.trim() === v)){ toast('มีชื่อ User นี้อยู่แล้ว'); el.value = shown; return; }
+  } else if(f === 'type'){ v = el.value; orig = normType(base.type);
+  } else if(f === 'note'){ v = el.value.trim(); orig = String(base.note ?? '');
+  } else { v = toInt(el.value); el.value = v; orig = toInt(base[f]); }
+  const nd = {...dr};
+  if(v === orig) delete nd[f]; else nd[f] = v;
+  if(Object.keys(nd).length) S.draft[id] = nd; else delete S.draft[id];
+  el.classList.toggle('chg', v !== orig);
+  paintDirty();
 });
 $('#tbl').addEventListener('focusout', () => {
   setTimeout(() => { if(S.pending && !tableFocused()){ S.pending = false; render(); } }, 0);
 });
-function toggleEdit(){ S.editing = !S.editing; S.confirmId = ''; S.pending = false; if(S.editing) cancelImport(); render(); }
+function dirtyCount(){
+  const ids = new Set(S.del);
+  Object.keys(S.draft).forEach(id => { if(Object.keys(S.draft[id]).length) ids.add(id); });
+  return ids.size;
+}
+function paintDirty(){
+  const n = dirtyCount();
+  $('#editMsg').innerHTML = n ? `มีการเปลี่ยนแปลง <b>${fmt(n)}</b> รายการ <span class="hint">ยังไม่ได้บันทึก</span>` : '<span class="hint">ยังไม่มีการเปลี่ยนแปลง แก้ในตารางได้เลย จะบันทึกเมื่อกด "บันทึก"</span>';
+  $('#saveBtn').disabled = !n || S.saving;
+}
+async function saveDraft(){
+  if(S.saving) return false;
+  const n = dirtyCount(); if(!n) return true;
+  S.saving = true; paintDirty(); $('#saveBtn').textContent = 'กำลังบันทึก…';
+  let ok = true;
+  try{
+    for(const id of [...S.del]){ await S.col.doc(id).delete(); S.del.delete(id); delete S.draft[id]; }
+    for(const id of Object.keys(S.draft)){
+      const f = S.draft[id]; if(!Object.keys(f).length){ delete S.draft[id]; continue; }
+      await S.col.doc(id).update({...f, updatedAt: Date.now()}); delete S.draft[id];
+    }
+    toast('บันทึกแล้ว ' + fmt(n) + ' รายการ');
+  }catch(err){ ok = false; writeError(err); }
+  if(ok && typeof afterBulk === 'function'){ try{ await afterBulk(); }catch(_){} }
+  S.saving = false; $('#saveBtn').textContent = 'บันทึก';
+  render(); paintDirty();
+  return ok;
+}
+function exitEdit(){ S.editing = false; S.draft = {}; S.del = new Set(); S.confirmId = ''; S.pending = false; $('#cfm').hidden = true; render(); }
+function toggleEdit(){
+  if(!S.editing){ S.editing = true; S.draft = {}; S.del = new Set(); S.pending = false; cancelImport(); render(); return; }
+  const n = dirtyCount();
+  if(!n){ exitEdit(); return; }
+  $('#cfmN').textContent = fmt(n);
+  $('#cfm').hidden = false; $('#cfmSave').focus();
+}
 $('#edit').addEventListener('click', toggleEdit);
+$('#saveBtn').addEventListener('click', saveDraft);
+$('#cancelEdit').addEventListener('click', toggleEdit);
+$('#cfmSave').addEventListener('click', async () => { if(await saveDraft()) exitEdit(); else $('#cfm').hidden = true; });
+$('#cfmDiscard').addEventListener('click', exitEdit);
+$('#cfmBack').addEventListener('click', () => { $('#cfm').hidden = true; });
+window.addEventListener('beforeunload', e => { if(S.editing && dirtyCount()){ e.preventDefault(); e.returnValue = ''; } });
 $('#addForm').addEventListener('submit', async e => {
   e.preventDefault();
   const name = $('#n-name').value.trim();
@@ -692,16 +763,26 @@ $('#addForm').addEventListener('submit', async e => {
     $('#n-name').value = ''; $('#n-note').value = ''; $('#n-type').value = ''; NUMK.forEach(k => $('#n-'+k).value = 0); $('#n-name').focus();
   }catch(err){ writeError(err); }
 });
-$('#copy').addEventListener('click', async () => {
+$('#export').addEventListener('click', () => {
   const {list} = visible();
-  if(!list.length){ toast('ยังไม่มีข้อมูลให้คัดลอก'); return; }
-  const head = ['ลำดับที่','User'].concat(COLS.map(c => c.label)).join('\t');
-  const tsv = [head].concat(list.map(r => [r.rank, r.name].concat(COLS.map(c => r[c.k])).join('\t'))).join('\n');
-  try{ await navigator.clipboard.writeText(tsv); toast('คัดลอกแล้ว วางใน Excel หรือสไลด์ได้เลย'); }
-  catch(_){
-    const ta = document.createElement('textarea'); ta.value = tsv; document.body.appendChild(ta); ta.select();
-    let ok = false; try{ ok = document.execCommand('copy'); }catch(_){}
-    ta.remove(); toast(ok ? 'คัดลอกแล้ว' : 'คัดลอกไม่ได้ ลองลากเลือกข้อความในตารางเอง');
+  if(!list.length){ toast('ยังไม่มีข้อมูลให้ส่งออก'); return; }
+  const head = ['ลำดับที่','User','ประเภท','จำนวน Device','จำนวน Device offline ทั้งหมด','จำนวนหลังเซิร์ฟล่ม','หมายเหตุ'];
+  const rows = list.map((r,i) => [i + 1, r.name, r.type, r.before, r.offline, r.after, r.note]);
+  rows.push(['รวม', fmt(list.length) + ' User', '', sum(list,'before'), sum(list,'offline'), sum(list,'after'), '']);
+  const aoa = [head].concat(rows);
+  try{
+    if(typeof XLSX === 'undefined') throw new Error('no xlsx');
+    const ws = XLSX.utils.aoa_to_sheet(aoa);
+    ws['!cols'] = [{wch:9},{wch:30},{wch:18},{wch:14},{wch:22},{wch:18},{wch:40}];
+    const wb = XLSX.utils.book_new(); XLSX.utils.book_append_sheet(wb, ws, 'ข้อมูล');
+    const d = new Date(), p = n => String(n).padStart(2,'0');
+    XLSX.writeFile(wb, 'Device-' + d.getFullYear() + '-' + p(d.getMonth()+1) + '-' + p(d.getDate()) + '.xlsx');
+    toast('ส่งออกแล้ว ' + fmt(list.length) + ' User' + (S.type ? ' (เฉพาะประเภท ' + S.type + ')' : ''));
+  }catch(_){
+    const tsv = aoa.map(r => r.join('\t')).join('\n');
+    (navigator.clipboard ? navigator.clipboard.writeText(tsv) : Promise.reject()).then(
+      () => toast('ดาวน์โหลดไม่ได้ในหน้านี้ จึงคัดลอกตารางให้แทน วางใน Excel ได้เลย'),
+      () => toast('ส่งออกไม่สำเร็จ ลองเปิดหน้านี้ในเบราว์เซอร์โดยตรง'));
   }
 });
 
@@ -805,7 +886,7 @@ function renderImport(){
 function renderPreview(){
   if(!S.imp) return;
   const {items, fallback} = computeImport();
-  $('#impCount').textContent = `พบ ${fmt(items.length)} User`;
+  $('#impCount').textContent = `พบ ${fmt(items.length)} User · รวมก่อนล่ม ${fmt(sum(items,'before'))} · offline ${fmt(sum(items,'offline'))} · หลังล่ม ${fmt(sum(items,'after'))}`;
   $('#i-go').disabled = !items.length || S.importing;
   $('#i-warn').textContent = fallback ? `${fmt(fallback)} แถวไม่มีชื่อ User ระบบตั้งชื่อ "User <ลำดับที่>" ให้ แก้ชื่อได้ภายหลังในโหมดแก้ไขข้อมูล` : '';
   $('#i-prev').innerHTML = items.length
@@ -849,13 +930,14 @@ $('#i-go').addEventListener('click', async () => {
   S.importing = false; $('#i-go').textContent = 'นำเข้า';
   if(failed){ renderPreview(); return; }
   S.imp = null; renderImport();
-  toast(`นำเข้าแล้ว: เพิ่ม ${added}, อัปเดต ${updated}` + (replace ? `, ลบ ${removed}` : ''));
+  toast(`นำเข้าแล้ว: เพิ่ม ${added}, อัปเดต ${updated}` + (replace ? `, ลบ ${removed}` : '') + ` · รวมก่อนล่ม ${fmt(sum(items,'before'))}`);
+  if(typeof afterBulk === 'function') afterBulk();
 });
 
 /* ---------- storage (Supabase) ---------- */
 /* ใส่ค่าจากโปรเจกต์ Supabase ของคุณ: Project Settings → API (ใช้ anon / publishable key เท่านั้น ห้ามใส่ service_role) */
-const SUPABASE_URL = 'https://lrbmzzzwywizfbwaxmzx.supabase.co';
-const SUPABASE_KEY = 'sb_publishable_CcCQ5_EUghIhkkxlhh5ffA_maPxALGX';
+const SUPABASE_URL = 'ใส่ Project URL ตรงนี้';
+const SUPABASE_KEY = 'ใส่ anon key ตรงนี้';
 /* true = ใครมีลิงก์ก็ดูตัวเลขได้โดยไม่ล็อกอิน (แก้ไขต้องล็อกอิน) / false = ต้องล็อกอินก่อนทุกอย่าง
    ต้องตรงกับ SQL ที่รัน (ดูไฟล์ supabase-setup.sql) */
 const PUBLIC_VIEW = false;
@@ -887,8 +969,13 @@ async function loadAll(){
 }
 function subscribe(){
   if(chan){ sb.removeChannel(chan); chan = null; }
-  chan = sb.channel('device_summary_live').on('postgres_changes', {event:'*', schema:'public', table:TABLE}, () => loadAll()).subscribe();
+  let lt = null;
+  chan = sb.channel('device_summary_live').on('postgres_changes', {event:'*', schema:'public', table:TABLE}, () => {
+    if(S.importing || S.saving) return;          /* รอให้เขียนเสร็จก่อน แล้วค่อยโหลดครั้งเดียว */
+    clearTimeout(lt); lt = setTimeout(loadAll, 250);
+  }).subscribe();
 }
+async function afterBulk(){ if(sb && (S.canWrite || PUBLIC_VIEW)) await loadAll(); }
 function showLogin(on, closable){ $('#login').hidden = !on; $('#l-close').hidden = !closable; if(on) setTimeout(() => $('#l-email').focus(), 0); }
 function paintAuth(session){
   S.canWrite = !!session;
