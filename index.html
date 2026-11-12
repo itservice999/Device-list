@@ -500,7 +500,7 @@ function render(){
   let st = '';
   if(S.failed) st = `<h2>เปิดข้อมูลไม่ได้</h2><p>${esc(S.failed)}</p>`;
   else if(!S.loaded) st = '<p>กำลังโหลดข้อมูล…</p>';
-  else if(!ranked.length && !ed) st = w
+  else if(!allRows().length && !ed) st = w
     ? '<h2>ยังไม่มีข้อมูล</h2><p>นำเข้าจากไฟล์ Excel หรือพิมพ์เองก็ได้</p><div class="btns"><button class="btn primary" type="button" data-act="pick">Import Excel</button><button class="btn" type="button" data-act="edit">แก้ไขข้อมูล</button></div>'
     : '<h2>ยังไม่มีข้อมูล</h2>';
   $('#state').hidden = !st; $('#state').innerHTML = st;
