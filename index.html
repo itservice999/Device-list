@@ -269,6 +269,11 @@ tr.del td:not(:last-child) input,tr.del td:not(:last-child) select{text-decorati
 #cfm h2{margin:0;font-family:var(--display);font-size:1.25rem}
 #cfm p{margin:0;color:var(--muted)}
 #cfm .btns{display:flex;flex-wrap:wrap;gap:10px;margin-top:6px}
+.kpi.k-mig .v{color:var(--mint,#34d399)}
+.tag.mig{border-color:var(--mint,#34d399);color:var(--mint,#34d399)}
+.ub.m{display:block}
+.ub.m i{background:var(--mint,#34d399)}
+th.mig,td.mig{color:var(--mint,#34d399)}
 </style>
 
 <div id="login" hidden><form id="loginForm" autocomplete="on">
@@ -325,6 +330,7 @@ tr.del td:not(:last-child) input,tr.del td:not(:last-child) select{text-decorati
         <button type="button" data-type="Self-Serve" aria-pressed="false" title="Self-Serve = ลูกค้าส่งสื่อเอง">Self-Serve</button>
         <button type="button" data-type="ND" aria-pressed="false" title="ประเภท ND">ND</button>
         <button type="button" data-type="Cancel" aria-pressed="false" title="ประเภท Cancel">Cancel</button>
+        <button type="button" data-type="__moved" aria-pressed="false" title="เฉพาะ User ที่มีการย้ายไปเซิร์ฟใหม่แล้ว">ย้ายเซิร์ฟ</button>
       </div>
       <div class="seg" role="tablist" aria-label="มุมมอง">
         <button type="button" role="tab" data-view="dash" aria-selected="true">แดชบอร์ด</button>
@@ -382,6 +388,7 @@ const COLS = [
   {k:'before',  t:'num',  label:'จำนวน Device'},
   {k:'offline', t:'num',  label:'จำนวน Device offline ทั้งหมด'},
   {k:'after',   t:'num',  label:'จำนวนหลังเซิร์ฟล่ม'},
+  {k:'migrated',t:'num',  label:'ย้ายไปเซิร์ฟใหม่แล้ว (เครื่อง)'},
   {k:'note',    t:'text', label:'หมายเหตุ'}
 ];
 /* ประเภท: OMS = เราเป็นฝ่ายส่งสื่อเอง, Self-Serve = ลูกค้าส่งสื่อเอง (User เดียวมีได้ทั้งสองแบบ) */
@@ -395,10 +402,10 @@ function normType(v){
   if(o && c) return TBOTH; if(o) return 'OMS'; if(c) return 'Self-Serve';
   return String(v ?? '').replace(/\s+/g,' ').trim();
 }
-const typeMatch = (r, f) => !f || (f === 'OMS' ? (r.type === 'OMS' || r.type === TBOTH) : f === 'Self-Serve' ? (r.type === 'Self-Serve' || r.type === TBOTH) : r.type === f);
+const typeMatch = (r, f) => !f || (f === '__moved' ? r.migrated > 0 : (f === 'OMS' ? (r.type === 'OMS' || r.type === TBOTH) : f === 'Self-Serve' ? (r.type === 'Self-Serve' || r.type === TBOTH) : r.type === f));
 const NUMK = COLS.filter(c => c.t === 'num').map(c => c.k);
 const LABEL = Object.fromEntries(COLS.map(c => [c.k, c.label]));
-const SORTS = [['before','จำนวน Device ก่อนเซิร์ฟล่ม'],['after','จำนวนหลังเซิร์ฟล่ม'],['offline','Offline มากที่สุด'],['diff','ลดลงมากที่สุด (หลัง − ก่อน)'],['name','ชื่อ User']];
+const SORTS = [['migrated','ย้ายไปเซิร์ฟใหม่แล้วมากที่สุด'],['before','จำนวน Device ก่อนเซิร์ฟล่ม'],['after','จำนวนหลังเซิร์ฟล่ม'],['offline','Offline มากที่สุด'],['diff','ลดลงมากที่สุด (หลัง − ก่อน)'],['name','ชื่อ User']];
 const defDir = k => (k === 'name' || k === 'diff') ? 1 : -1;
 
 const S = {
@@ -524,7 +531,7 @@ function render(){
     $('#sortSel').value = known ? S.sort.key : '';
     const all = allRows();
     document.querySelectorAll('#typeSeg [data-type]').forEach(b => {
-      const k = b.dataset.type, n = all.filter(r => typeMatch(r, k)).length, base = k || 'ทั้งหมด';
+      const k = b.dataset.type, n = all.filter(r => typeMatch(r, k)).length, base = k === '__moved' ? 'ย้ายเซิร์ฟ' : (k || 'ทั้งหมด');
       b.textContent = base + ' (' + n + ')'; b.setAttribute('aria-pressed', String(k === S.type));
     });
     document.querySelectorAll('.seg [data-view]').forEach(b => b.setAttribute('aria-selected', String(b.dataset.view === S.view)));
@@ -543,11 +550,13 @@ function render(){
 
 function renderKpis(pool){
   const before = sum(pool,'before'), after = sum(pool,'after'), off = sum(pool,'offline'), d = after - before;
+  const mig = sum(pool,'migrated'), migU = pool.filter(r => r.migrated > 0).length;
   const ratio = before ? after / before : null;
   $('#kpis').innerHTML =
     `<div class="kpi k-before"><div class="l">ก่อนเซิร์ฟล่ม</div><div class="v">${fmt(before)}</div><div class="s">จำนวน Device ทั้งหมด</div></div>` +
     `<div class="kpi k-after"><div class="l">หลังเซิร์ฟล่ม</div><div class="v">${fmt(after)}</div><div class="s">${deltaChip(d)}<span>เทียบก่อนเซิร์ฟล่ม</span></div></div>` +
     `<div class="kpi k-bad"><div class="l">Offline ทั้งหมด (ก่อนล่ม)</div><div class="v">${fmt(off)}</div><div class="s">${fmtPct(before ? off / before : null)} ของ Device ก่อนล่ม</div></div>` +
+    `<div class="kpi k-mig"><div class="l">ย้ายไปเซิร์ฟใหม่แล้ว</div><div class="v">${fmt(mig)}</div><div class="s">${mig ? fmt(migU) + ' User · ' + fmtPct(before ? mig / before : null) + ' ของ Device ก่อนล่ม' : 'ยังไม่มีข้อมูลการย้าย'}</div></div>` +
     `<div class="kpi k-ring">${ring(ratio)}<div class="t"><div class="l">หลังล่มเหลืออยู่</div><div class="s" style="margin-top:2px">${ratio === null ? 'ไม่มีข้อมูลก่อนล่ม' : 'ของจำนวน Device ก่อนเซิร์ฟล่ม'}</div></div></div>`;
 }
 
@@ -580,7 +589,7 @@ function renderCards(list){
   if(!list.length){ $('#cards').innerHTML = '<p class="empty" style="grid-column:1/-1">ไม่พบ User ที่ตรงกับคำค้น</p>'; return; }
   const max = Math.max(1, ...list.map(r => Math.max(r.before, r.after)));
   $('#cards').innerHTML = list.map(r => {
-    const tags = r.offline ? `<span class="tag bad"><i>offline</i><b class="num">${fmt(r.offline)}</b></span>` : '';
+    const tags = (r.offline ? `<span class="tag bad"><i>offline</i><b class="num">${fmt(r.offline)}</b></span>` : '') + (r.migrated ? `<span class="tag mig"><i>ย้ายเซิร์ฟใหม่แล้ว</i><b class="num">${fmt(r.migrated)}${r.before ? ' / ' + fmt(r.before) : ''}</b></span>` : '');
     return `<button type="button" class="ucard" data-user="${esc(r.id)}">
       <span class="u-top"><span class="rk num">${pad2(r.rank)}</span><span class="u-name">${esc(r.name || '(ไม่มีชื่อ)')}</span>${r.type ? `<span class="u-type">${typeChips(r.type)}</span>` : ''}${r.note ? `<span class="u-note" title="${esc(r.note)}">${esc(r.note)}</span>` : ''}</span>
       <span class="u-nums">
@@ -593,6 +602,7 @@ function renderCards(list){
         <span class="ub b"><i style="width:${r.before / max * 100}%"></i></span>
         <span class="ub a"><i style="width:${r.after / max * 100}%"></i></span>
       </span>
+      ${r.migrated && r.before ? `<span class="ub m" title="ย้ายแล้ว ${fmt(r.migrated)} จาก ${fmt(r.before)}"><i style="width:${Math.min(100, r.migrated / r.before * 100)}%"></i></span>` : ''}
       <span class="u-tags">${tags || '<span class="tag"><i>ไม่มี Device offline</i></span>'}</span>
     </button>`;
   }).join('');
@@ -642,8 +652,8 @@ function renderTable(ranked, list){
     : '';
   t.innerHTML = `<thead>
       <tr class="grp"><th class="s1" rowspan="2">ลำดับที่</th><th class="s2" rowspan="2"${sortAttr('name')}>${sbtn('name','User')}</th>
-        <th rowspan="2">ประเภท</th><th class="pre" colspan="${NUMK.length-1}">ก่อนเซิร์ฟล่ม</th><th class="after">หลังเซิร์ฟล่ม</th><th rowspan="2">หมายเหตุ</th></tr>
-      <tr>${COLS.filter(c => c.t === 'num').map(c => th(c.k, c.label, 'r' + (c.k==='after'?' after':''))).join('')}</tr>
+        <th rowspan="2">ประเภท</th><th class="pre" colspan="${NUMK.length-2}">ก่อนเซิร์ฟล่ม</th><th class="after">หลังเซิร์ฟล่ม</th><th class="mig">เซิร์ฟใหม่</th><th rowspan="2">หมายเหตุ</th></tr>
+      <tr>${COLS.filter(c => c.t === 'num').map(c => th(c.k, c.label, 'r' + (c.k==='after'?' after':c.k==='migrated'?' mig':''))).join('')}</tr>
     </thead><tbody>${body}</tbody>${foot}`;
 }
 
@@ -766,14 +776,14 @@ $('#addForm').addEventListener('submit', async e => {
 $('#export').addEventListener('click', () => {
   const {list} = visible();
   if(!list.length){ toast('ยังไม่มีข้อมูลให้ส่งออก'); return; }
-  const head = ['ลำดับที่','User','ประเภท','จำนวน Device','จำนวน Device offline ทั้งหมด','จำนวนหลังเซิร์ฟล่ม','หมายเหตุ'];
-  const rows = list.map((r,i) => [i + 1, r.name, r.type, r.before, r.offline, r.after, r.note]);
-  rows.push(['รวม', fmt(list.length) + ' User', '', sum(list,'before'), sum(list,'offline'), sum(list,'after'), '']);
+  const head = ['ลำดับที่','User','ประเภท','จำนวน Device','จำนวน Device offline ทั้งหมด','จำนวนหลังเซิร์ฟล่ม','ย้ายไปเซิร์ฟใหม่แล้ว (เครื่อง)','หมายเหตุ'];
+  const rows = list.map((r,i) => [i + 1, r.name, r.type, r.before, r.offline, r.after, r.migrated, r.note]);
+  rows.push(['รวม', fmt(list.length) + ' User', '', sum(list,'before'), sum(list,'offline'), sum(list,'after'), sum(list,'migrated'), '']);
   const aoa = [head].concat(rows);
   try{
     if(typeof XLSX === 'undefined') throw new Error('no xlsx');
     const ws = XLSX.utils.aoa_to_sheet(aoa);
-    ws['!cols'] = [{wch:9},{wch:30},{wch:18},{wch:14},{wch:22},{wch:18},{wch:40}];
+    ws['!cols'] = [{wch:9},{wch:30},{wch:18},{wch:14},{wch:22},{wch:18},{wch:26},{wch:40}];
     const wb = XLSX.utils.book_new(); XLSX.utils.book_append_sheet(wb, ws, 'ข้อมูล');
     const d = new Date(), p = n => String(n).padStart(2,'0');
     XLSX.writeFile(wb, 'Device-' + d.getFullYear() + '-' + p(d.getMonth()+1) + '-' + p(d.getDate()) + '.xlsx');
@@ -803,6 +813,7 @@ window.addEventListener('drop', e => {
 
 const norm = h => String(h ?? '').replace(/\s+/g,' ').trim();
 const DETECT = [
+  ['migrated',/ย้าย|migrat|เซิร์ฟใหม่|new ?server/i],
   ['type',    /ประเภท|^type$|oms|self/i],
   ['after',   /หลัง|after/i],
   ['offline', /offline|ออฟไลน์/i],
@@ -862,7 +873,7 @@ function computeImport(){
       if(!norm(get('note')) && !NUMK.some(k => map[k] && toInt(get(k)) > 0)) return;
       name = 'User ' + seq; res.fallback++;
     }
-    const x = g.get(name) || {name, note:'', type:'', seq, before:0, offline:0, after:0};
+    const x = g.get(name) || {name, note:'', type:'', seq, before:0, offline:0, after:0, migrated:0};
     NUMK.forEach(k => { x[k] += map[k] ? toInt(get(k)) : 0; });
     const tp = normType(get('type')); if(tp) x.type = normType(x.type + ' ' + tp);
     const n = norm(get('note'));
@@ -872,7 +883,7 @@ function computeImport(){
   res.items = [...g.values()];
   return res;
 }
-const MAP_LABELS = [['user','User'],['seq','ลำดับที่'],['type','ประเภท'],['note',LABEL.note],['before',LABEL.before],['offline',LABEL.offline],['after',LABEL.after]];
+const MAP_LABELS = [['user','User'],['seq','ลำดับที่'],['type','ประเภท'],['note',LABEL.note],['before',LABEL.before],['offline',LABEL.offline],['after',LABEL.after],['migrated',LABEL.migrated]];
 function renderImport(){
   const box = $('#imp');
   if(!S.imp || !S.canWrite){ box.hidden = true; return; }
@@ -886,13 +897,13 @@ function renderImport(){
 function renderPreview(){
   if(!S.imp) return;
   const {items, fallback} = computeImport();
-  $('#impCount').textContent = `พบ ${fmt(items.length)} User · รวมก่อนล่ม ${fmt(sum(items,'before'))} · offline ${fmt(sum(items,'offline'))} · หลังล่ม ${fmt(sum(items,'after'))}`;
+  $('#impCount').textContent = `พบ ${fmt(items.length)} User · รวมก่อนล่ม ${fmt(sum(items,'before'))} · offline ${fmt(sum(items,'offline'))} · หลังล่ม ${fmt(sum(items,'after'))} · ย้ายเซิร์ฟ ${fmt(sum(items,'migrated'))}`;
   $('#i-go').disabled = !items.length || S.importing;
   $('#i-warn').textContent = fallback ? `${fmt(fallback)} แถวไม่มีชื่อ User ระบบตั้งชื่อ "User <ลำดับที่>" ให้ แก้ชื่อได้ภายหลังในโหมดแก้ไขข้อมูล` : '';
   $('#i-prev').innerHTML = items.length
-    ? `<table><thead><tr><th>User</th><th>ประเภท</th><th class="r">จำนวน Device</th><th class="r">offline ทั้งหมด</th><th class="r">หลังเซิร์ฟล่ม</th><th>หมายเหตุ</th></tr></thead><tbody>` +
-      items.slice(0,5).map(x => `<tr><td>${esc(x.name)}</td><td>${esc(x.type)}</td><td class="r num">${dash(x.before)}</td><td class="r num">${dash(x.offline)}</td><td class="r num">${dash(x.after)}</td><td class="hint">${esc(x.note)}</td></tr>`).join('') +
-      (items.length > 5 ? `<tr><td colspan="6" class="hint">และอีก ${fmt(items.length-5)} User</td></tr>` : '') + '</tbody></table>'
+    ? `<table><thead><tr><th>User</th><th>ประเภท</th><th class="r">จำนวน Device</th><th class="r">offline ทั้งหมด</th><th class="r">หลังเซิร์ฟล่ม</th><th class="r">ย้ายเซิร์ฟใหม่</th><th>หมายเหตุ</th></tr></thead><tbody>` +
+      items.slice(0,5).map(x => `<tr><td>${esc(x.name)}</td><td>${esc(x.type)}</td><td class="r num">${dash(x.before)}</td><td class="r num">${dash(x.offline)}</td><td class="r num">${dash(x.after)}</td><td class="r num">${dash(x.migrated)}</td><td class="hint">${esc(x.note)}</td></tr>`).join('') +
+      (items.length > 5 ? `<tr><td colspan="7" class="hint">และอีก ${fmt(items.length-5)} User</td></tr>` : '') + '</tbody></table>'
     : '<p class="hint">ยังไม่พบแถวข้อมูล เปิด "ตรวจว่าระบบจับคอลัมน์ถูกไหม" แล้วเลือกคอลัมน์ User หรือ ลำดับที่</p>';
 }
 $('#i-map').addEventListener('change', e => { const k = e.target.dataset.k; if(!k || !S.imp) return; S.imp.map[k] = e.target.value; renderPreview(); });
@@ -936,15 +947,15 @@ $('#i-go').addEventListener('click', async () => {
 
 /* ---------- storage (Supabase) ---------- */
 /* ใส่ค่าจากโปรเจกต์ Supabase ของคุณ: Project Settings → API (ใช้ anon / publishable key เท่านั้น ห้ามใส่ service_role) */
-const SUPABASE_URL = 'https://lrbmzzzwywizfbwaxmzx.supabase.co';
-const SUPABASE_KEY = 'sb_publishable_CcCQ5_EUghIhkkxlhh5ffA_maPxALGX';
+const SUPABASE_URL = 'ใส่ Project URL ตรงนี้';
+const SUPABASE_KEY = 'ใส่ anon key ตรงนี้';
 /* true = ใครมีลิงก์ก็ดูตัวเลขได้โดยไม่ล็อกอิน (แก้ไขต้องล็อกอิน) / false = ต้องล็อกอินก่อนทุกอย่าง
    ต้องตรงกับ SQL ที่รัน (ดูไฟล์ supabase-setup.sql) */
 const PUBLIC_VIEW = false;
 
 const TABLE = 'device_summary';
-const TO_DB = {before:'before_count', after:'after_count', createdAt:'created_ms', updatedAt:'updated_ms'};
-const FROM_DB = {before_count:'before', after_count:'after', created_ms:'createdAt', updated_ms:'updatedAt'};
+const TO_DB = {before:'before_count', after:'after_count', migrated:'moved_count', createdAt:'created_ms', updatedAt:'updated_ms'};
+const FROM_DB = {before_count:'before', after_count:'after', moved_count:'migrated', created_ms:'createdAt', updated_ms:'updatedAt'};
 const toDb = o => Object.fromEntries(Object.entries(o).map(([k,v]) => [TO_DB[k] || k, v]));
 const fromDb = row => { const o = {}; for(const k in row) o[FROM_DB[k] || k] = row[k]; return o; };
 const wrapErr = error => { if(!error) return; const e = new Error(error.message); e.code = (error.code === '42501' || error.status === 401 || error.status === 403) ? 'invalid_argument' : error.code; throw e; };
